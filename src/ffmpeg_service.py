@@ -758,8 +758,7 @@ class FFmpegService:
                         ), log_cb, cancel_event,
                     )
             finally:
-                for pass_file in passlog_path.parent.glob(f"{passlog_path.name}*"):
-                    if pass_file.is_file(): pass_file.unlink(missing_ok=True)
+                self._remove_passlog_files(passlog_path)
         else:
             self._execute_command(
                 self.build_replacement_command(options, visual_probe, audio_probe, output_path),
@@ -820,8 +819,7 @@ class FFmpegService:
                     log_cb, cancel_event,
                 )
             finally:
-                for pass_file in passlog_path.parent.glob(f"{passlog_path.name}*"):
-                    if pass_file.is_file(): pass_file.unlink(missing_ok=True)
+                self._remove_passlog_files(passlog_path)
         else:
             self._execute_command(
                 self.build_command(options, output_path), probe.get("duration"),
@@ -830,6 +828,13 @@ class FFmpegService:
         if cancel_event.is_set(): raise ServiceCancelled("Conversion cancelled")
         _notify_progress(progress_cb, 1.0, "Conversion completed")
         return str(output_path)
+
+    @staticmethod
+    def _remove_passlog_files(passlog_path: Path) -> None:
+        """清除 FFmpeg 二階段編碼產生的 passlog 檔案"""
+        for pass_file in passlog_path.parent.iterdir():
+            if pass_file.is_file() and pass_file.name.startswith(passlog_path.name):
+                pass_file.unlink(missing_ok=True)
 
     def _execute_command(
         self,

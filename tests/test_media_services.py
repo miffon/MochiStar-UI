@@ -702,7 +702,7 @@ def test_execute_conversion_parses_progress_without_real_subprocess(tmp_path: Pa
     assert any("ffmpeg diagnostic" in line for line in logs)
 
 
-def test_execute_conversion_runs_both_vbr_passes(tmp_path: Path) -> None:
+def test_execute_conversion_runs_both_vbr_passes_and_removes_passlogs(tmp_path: Path) -> None:
     def fake_run(*_args, **_kwargs):
         return SimpleNamespace(
             stdout='{"format":{"duration":"10"},"streams":[{"codec_type":"video"}]}',
@@ -710,14 +710,18 @@ def test_execute_conversion_runs_both_vbr_passes(tmp_path: Path) -> None:
         )
 
     commands = []
+    pass_files: list[Path] = []
 
     def start_process(command, **kwargs):
         commands.append(command)
+        passlog_path = Path(command[command.index("-passlogfile") + 1])
+        pass_files[:] = [Path(f"{passlog_path}-0.log"), Path(f"{passlog_path}-0.log.mbtree")]
+        for pass_file in pass_files: pass_file.write_text("x264 stats", encoding="utf-8")
         return FakeProcess(command, **kwargs)
 
     service = make_ffmpeg_service(fake_run, start_process)
     task = TaskRecord(conversion_options=ConversionOptions(
-        input_path=str(tmp_path / "clip.mov"), output_dir=str(tmp_path), acceleration="cpu",
+        input_path=str(tmp_path / "[A]ddiction.mov"), output_dir=str(tmp_path), acceleration="cpu",
         quality_mode="vbr_2pass", quality_value=12, maximum_bitrate=20,
     ))
     progress = []
@@ -728,6 +732,7 @@ def test_execute_conversion_runs_both_vbr_passes(tmp_path: Path) -> None:
     assert commands[0][commands[0].index("-pass") + 1] == "1"
     assert commands[1][commands[1].index("-pass") + 1] == "2"
     assert 0.25 in progress and 0.75 in progress and progress[-1] == 1.0
+    assert all(not pass_file.exists() for pass_file in pass_files)
 
 
 def test_stream_copy_is_rejected_before_ffmpeg_starts(tmp_path: Path) -> None:
