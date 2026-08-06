@@ -1,0 +1,312 @@
+name: Build MochiStar
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          version_source = Path("src/version.py").read_text(encoding="utf-8")
+          runtime_match = re.search(r'^__version__ = "([^"]+)"$', version_source, re.MULTILINE)
+          if not runtime_match or runtime_match.group(1) != version:
+              raise SystemExit("Package __version__ does not match pyproject.toml")
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"Release tag must use vMAJOR.MINOR.PATCH: {tag}")
+          if tag != f"v{version}":
+              raise SystemExit(f"Release tag {tag} does not match project version {version}")
+          print(f"Validated {tag}")
+          PY
+
+  build-windows:
+    needs: validate-version
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure release repository
+        shell: pwsh
+        run: |
+          Set-Content -Path src/release_config.py -Encoding utf8 -Value @(
+            '"""保存 packaging workflow 注入的 Release 設定"""'
+            ''
+            "GITHUB_REPOSITORY = `"$env:GITHUB_REPOSITORY`""
+          )
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest
+
+      - name: Build icons
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run python tools/build_icons.py
+
+      - name: Build Windows executable
+        run: >
+          uv run
+          --with nuitka
+          --with ordered-set
+          --with zstandard
+          python -m nuitka
+          --onefile
+          --enable-plugin=pyside6
+          --include-package=yt_dlp
+          --include-package-data=yt_dlp
+          --nofollow-import-to=yt_dlp.extractor.lazy_extractors
+          --include-data-dir=src/assets=assets
+          --windows-console-mode=disable
+          --windows-icon-from-ico=src/assets/logo.ico
+          --assume-yes-for-downloads
+          --output-dir=dist
+          --output-filename=MochiStar.exe
+          src/main.py
+
+      - name: Package Windows artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = Get-Item -Path dist\MochiStar.exe
+          New-Item -ItemType Directory -Force -Path artifact\MochiStar | Out-Null
+          Copy-Item -Path $executable.FullName -Destination artifact\MochiStar\MochiStar.exe
+          Copy-Item -Path README.md -Destination artifact\MochiStar\README.md
+          Compress-Archive -Path artifact\MochiStar -DestinationPath MochiStar-Windows.zip
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MochiStar-Windows
+          path: MochiStar-Windows.zip
+          if-no-files-found: error
+
+  build-macos:
+    needs: validate-version
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure release repository
+        run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest
+
+      - name: Build icons
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run python tools/build_icons.py
+
+      - name: Build macOS app
+        run: >
+          uv run
+          --with nuitka
+          --with ordered-set
+          --with zstandard
+          python -m nuitka
+          --standalone
+          --enable-plugin=pyside6
+          --include-package=yt_dlp
+          --include-package-data=yt_dlp
+          --nofollow-import-to=yt_dlp.extractor.lazy_extractors
+          --include-data-dir=src/assets=assets
+          --macos-create-app-bundle
+          --macos-app-name=MochiStar
+          --macos-app-icon=src/assets/logo.icns
+          --assume-yes-for-downloads
+          --output-dir=dist
+          --output-filename=MochiStar
+          src/main.py
+
+      - name: Package macOS artifact
+        run: |
+          set -euo pipefail
+          app_path="$(find dist -maxdepth 3 -name 'MochiStar.app' -type d | head -n 1)"
+          if [ -z "$app_path" ]; then
+            echo "MochiStar.app was not found under dist"
+            find dist -maxdepth 4 -print
+            exit 1
+          fi
+
+          mkdir -p artifact
+          cp -R "$app_path" artifact/MochiStar.app
+          cp README.md artifact/README.md
+          chmod +x artifact/MochiStar.app/Contents/MacOS/*
+          xattr -cr artifact/MochiStar.app
+          codesign --force --deep --sign - artifact/MochiStar.app
+          ditto -c -k --sequesterRsrc artifact MochiStar-macOS.zip
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MochiStar-macOS
+          path: MochiStar-macOS.zip
+          if-no-files-found: error
+
+  build-linux:
+    needs: validate-version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure release repository
+        run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes patchelf
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest
+
+      - name: Build Linux icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run python tools/build_icons.py
+
+      - name: Build Linux executable
+        run: >
+          uv run
+          --with nuitka
+          --with ordered-set
+          --with zstandard
+          python -m nuitka
+          --onefile
+          --enable-plugin=pyside6
+          --include-package=yt_dlp
+          --include-package-data=yt_dlp
+          --nofollow-import-to=yt_dlp.extractor.lazy_extractors
+          --include-data-dir=src/assets=assets
+          --linux-icon=src/assets/logo.svg
+          --assume-yes-for-downloads
+          --output-dir=dist
+          --output-filename=MochiStar
+          src/main.py
+
+      - name: Package Linux artifact
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/MochiStar
+          cp dist/MochiStar artifact/MochiStar/MochiStar
+          cp README.md artifact/MochiStar/README.md
+          chmod +x artifact/MochiStar/MochiStar
+          tar -C artifact -czf MochiStar-Linux.tar.gz MochiStar
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: MochiStar-Linux
+          path: MochiStar-Linux.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build-windows
+      - build-macos
+      - build-linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Collect release files
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          cp release-assets/MochiStar-Windows/MochiStar-Windows.zip release-files/
+          cp release-assets/MochiStar-macOS/MochiStar-macOS.zip release-files/
+          cp release-assets/MochiStar-Linux/MochiStar-Linux.tar.gz release-files/
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          notes_path=".github/release-notes/${GITHUB_REF_NAME}.md"
+          {
+            echo "MochiStar ${GITHUB_REF_NAME}"
+            echo
+            if [ -f "$notes_path" ]; then
+              cat "$notes_path"
+              echo
+            fi
+            cat <<'EOF'
+          下載:
+          - `MochiStar-Windows.zip`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版
+          - `MochiStar-macOS.zip`: 關閉 MochiStar, 解壓縮後將 `MochiStar.app` 拖入「應用程式」並取代舊版
+          - `MochiStar-Linux.tar.gz`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版, archive 會保留執行權限
+
+          使用前請依需要安裝 FFmpeg 與 JavaScript Runtime，或在「設定」指定工具目錄
+
+          MochiStar 不會自動執行、解壓縮或覆蓋更新檔。設定、佇列與紀錄存放在系統 application data 目錄, 替換程式不會清除這些資料
+
+          macOS 版本使用 ad-hoc signing，沒有 Apple notarization。若系統阻擋啟動，請到「系統設定」>「隱私權與安全性」確認後選擇仍要打開
+          EOF
+          } > release-body.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MochiStar ${{ github.ref_name }}
+          body_path: release-body.md
+          files: release-files/*

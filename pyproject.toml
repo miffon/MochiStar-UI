@@ -1,0 +1,17 @@
+[project]
+name = "mochistar-ui"
+version = "1.0.0"
+description = "Cross-platform GUI for media download and convert"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pyside6-essentials>=6.11.1",
+    "pytest>=9.1.1",
+    "yt-dlp>=2026.7.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = ["-p", "no:cacheprovider", "--basetemp=.pytest-tmp"]
+tmp_path_retention_policy = "failed"

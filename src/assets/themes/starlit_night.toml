@@ -1,0 +1,49 @@
+# Theme 基本資訊
+[meta]
+name = "Starlit Night"
+
+# Theme 色彩錨點
+[palette]
+background = "#111213" # 程式最底層背景
+chrome = "#282e38" # TopBar 與 StatusBar 背景
+surface = "#2c3542" # Card、input 與一般按鈕的共同色系
+accent = "#7c96c4" # Primary 與 focus
+accent_aux = "#d2dae6" # Accent hover 混色目標
+text = "#d6d9dd" # 主要文字
+warning = "#e5b567" # 警告狀態
+error = "#f36b7f" # 錯誤狀態
+success = "#50c878" # 成功狀態
+
+[variation]
+strength = 0.4 # HSL 變化強度
+
+# 圓角尺寸
+[radii]
+small = "5px" # Progress、scrollbar 與小型 item
+medium = "8px" # Input、button、table 與 statusBar
+large = "12px" # TopBar、card 與 QGroupBox
+
+# 間距尺寸, 從 xxs 到 xl 逐級放大
+[spacing]
+xxs = "2px" # 極小間距, 目前用於 scrollbar margin
+xs = "4px" # 緊湊間距, 用於 button padding、title padding 與 item gap
+sm = "7px" # 小間距, 用於 input、table item 與一般 control padding
+md = "10px" # 中間距, 用於 card 內距、input 水平 padding 與 group margin
+lg = "14px" # 大間距, 用於 card padding 與 button 水平 padding
+xl = "18px" # 最大間距, 用於 ComboBox drop-down 寬度與較大的空間
+
+# 元件尺寸
+[sizing]
+control_height = "28px" # Input、button 與 ComboBox 最小高度
+scrollbar = "10px" # Scrollbar 寬度與高度
+progress_height = "8px" # 底部 progress bar 高度
+status_height = "40px" # 底部 statusBar 最小高度
+combo_left_padding = "12px" # 一般 ComboBox 用來對齊 QLineEdit 的實際文字像素
+editable_combo_left_padding = "8px" # Editable ComboBox 的 native font 與 DPI 視覺補償
+
+# 字體尺寸
+[typography]
+font_size = "10pt" # 全域基礎字體
+title_size = "18pt" # Panel page title
+subtitle_size = "10pt" # Panel subtitle 與 muted 文字
+brand_size = "14pt" # TopBar 品牌名稱

@@ -1,0 +1,45 @@
+# Theme 基本資訊
+[meta]
+name = "Cute Light"
+
+# 呼應 logo 的色彩錨點
+[palette]
+background = "#fdfdfd" # App 主背景
+chrome = "#fff8f6" # TopBar 與 StatusBar 背景
+surface = "#f7dfe2" # Card、input 與一般按鈕的共同色系
+accent = "#f17986"
+accent_aux = "#ffb490"
+text = "#4b3540"
+warning = "#b97824"
+error = "#d94f68"
+success = "#5c9b78"
+
+[variation]
+strength = 0.4
+
+[radii]
+small = "5px"
+medium = "8px"
+large = "12px"
+
+[spacing]
+xxs = "2px"
+xs = "4px"
+sm = "7px"
+md = "10px"
+lg = "14px"
+xl = "18px"
+
+[sizing]
+control_height = "28px"
+scrollbar = "10px"
+progress_height = "8px"
+status_height = "40px"
+combo_left_padding = "12px"
+editable_combo_left_padding = "8px"
+
+[typography]
+font_size = "10pt"
+title_size = "18pt"
+subtitle_size = "10pt"
+brand_size = "14pt"
