@@ -11,6 +11,8 @@ from update_service import (
     DownloadedUpdate,
     ReleaseProvider,
     SemanticVersion,
+    UpdateCheckResult,
+    UpdateCheckStatus,
     UpdateCancelled,
     UpdateDownloader,
     UpdateRelease,
@@ -40,12 +42,14 @@ class UpdateController(QObject):
         downloader: UpdateDownloader,
         current_version: str,
         platform_key: str | None = None,
+        is_test_build: bool = False,
     ):
         super().__init__()
         self.provider = provider
         self.downloader = downloader
         self.current_version = SemanticVersion.parse(current_version)
         self.platform_key = platform_key or current_platform_key()
+        self.is_test_build = is_test_build
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="app-update")
         self._check_id = 0
         self._download_id = 0
@@ -85,11 +89,19 @@ class UpdateController(QObject):
     def _run_check(self, request_id: int, manual: bool) -> None:
         try:
             release = self.provider.check_latest(self.platform_key)
-            if release is not None and release.version <= self.current_version: release = None
-            self._check_finished.emit(request_id, release, "", manual)
+            self._check_finished.emit(request_id, self._classify_release(release), "", manual)
         except Exception as error:
             logging.getLogger(__name__).exception("Update check failed")
             self._check_finished.emit(request_id, None, str(error), manual)
+
+    def _classify_release(self, release: UpdateRelease | None) -> UpdateCheckResult:
+        """依正式版與目前 build 身分判斷更新狀態"""
+        if release is None: return UpdateCheckResult(UpdateCheckStatus.NO_STABLE_RELEASE)
+        if release.version > self.current_version or (self.is_test_build and release.version == self.current_version):
+            return UpdateCheckResult(UpdateCheckStatus.AVAILABLE, release)
+        if self.is_test_build and release.version < self.current_version:
+            return UpdateCheckResult(UpdateCheckStatus.TEST_BUILD_AHEAD)
+        return UpdateCheckResult(UpdateCheckStatus.UP_TO_DATE)
 
     def _run_download(
         self,
@@ -116,7 +128,7 @@ class UpdateController(QObject):
     def _apply_check_result(
         self,
         request_id: int,
-        release: UpdateRelease | None,
+        result: UpdateCheckResult | None,
         error: str,
         manual: bool,
     ) -> None:
@@ -125,8 +137,12 @@ class UpdateController(QObject):
             self.check_failed.emit(error, manual)
             self.log_message.emit(f"Update check failed: {error}")
             return
-        self.check_succeeded.emit(release, manual)
-        self.log_message.emit(f"Update available: {release.tag}" if release else "Application is up to date")
+        if result is None: return
+        self.check_succeeded.emit(result, manual)
+        self.log_message.emit(
+            f"Update available: {result.release.tag}"
+            if result.release else f"Update check result: {result.status.value}"
+        )
 
     @Slot(int, object, str, bool)
     def _apply_download_result(

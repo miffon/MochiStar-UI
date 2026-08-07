@@ -20,7 +20,7 @@ from models import (
     TaskStatus,
 )
 from storage import SCHEMA_VERSION, AppStorage, Settings
-from version import __version__
+from version import __version__, display_version
 
 TEST_PATH = Path("test-data")
 
@@ -228,6 +228,11 @@ def test_runtime_version_matches_project_metadata() -> None:
 
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == project["project"]["version"]
+
+
+def test_display_version_marks_only_test_builds() -> None:
+    assert display_version("1.2.3", False) == "1.2.3"
+    assert display_version("1.2.3", True) == "1.2.3-test"
 
 
 def test_storage_filters_completed_tasks_and_recovers_running(tmp_path: Path) -> None:

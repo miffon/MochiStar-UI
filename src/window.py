@@ -55,6 +55,7 @@ from panels import (
     AnalyzePanel, BottomStatusBar, ConversionPanel, FileAnalysisPanel, ReplacementPanel,
     LogPanel, QueuePanel, SettingsPanel, SubtitlePanel,
 )
+from release_config import IS_TEST_BUILD
 from storage import AppStorage, Settings
 from theme import ThemeError, apply_theme, theme_color
 from update_controller import UpdateController
@@ -62,11 +63,13 @@ from update_service import (
     DownloadedUpdate,
     GitHubReleaseProvider,
     ManualUpdateInstaller,
+    UpdateCheckResult,
+    UpdateCheckStatus,
     UpdateDownloader,
     UpdateRelease,
     manual_update_instructions,
 )
-from version import __version__
+from version import DISPLAY_VERSION, __version__
 
 
 WINDOW_CORNER_RADIUS = 8
@@ -246,7 +249,9 @@ class MainWindow(QMainWindow):
             storage, self.media_service, self.ffmpeg_service, self.settings.worker_count
         )
         provider = update_provider or GitHubReleaseProvider()
-        self.update_controller = UpdateController(provider, update_downloader or UpdateDownloader(), __version__)
+        self.update_controller = UpdateController(
+            provider, update_downloader or UpdateDownloader(), __version__, is_test_build=IS_TEST_BUILD,
+        )
         self.update_installer = ManualUpdateInstaller(self._open_directory)
         self._updates_configured = bool(getattr(provider, "repository", True))
         self._update_progress_dialog: QProgressDialog | None = None
@@ -1119,7 +1124,7 @@ class MainWindow(QMainWindow):
         self.file_analysis_panel.retranslate_reports()
         self.conversion_panel.refresh_preset_language()
         self.replacement_panel.refresh_preset_language()
-        self.settings_panel.retranslate_update_info(__version__)
+        self.settings_panel.retranslate_update_info(DISPLAY_VERSION)
         self.queue_panel.refresh_summary()
         self.bottom_status.refresh()
 
@@ -1157,7 +1162,7 @@ class MainWindow(QMainWindow):
 
     def _set_initial_update_status(self) -> None:
         source = "Ready to check for updates" if self._updates_configured else "Update service is not configured"
-        self.settings_panel.set_update_info(__version__, source)
+        self.settings_panel.set_update_info(DISPLAY_VERSION, source)
 
     def _set_auto_check_updates(self, enabled: bool) -> None:
         self.settings.auto_check_updates = enabled
@@ -1179,7 +1184,7 @@ class MainWindow(QMainWindow):
 
     def _check_for_updates(self, manual: bool) -> None:
         if not self._updates_configured:
-            self.settings_panel.set_update_info(__version__, "Update service is not configured")
+            self.settings_panel.set_update_info(DISPLAY_VERSION, "Update service is not configured")
             if manual:
                 QMessageBox.information(
                     self,
@@ -1191,21 +1196,27 @@ class MainWindow(QMainWindow):
 
     def _update_check_started(self, _manual: bool) -> None:
         self.settings_panel.check_updates_button.setEnabled(False)
-        self.settings_panel.set_update_info(__version__, "Checking for updates...")
+        self.settings_panel.set_update_info(DISPLAY_VERSION, "Checking for updates...")
 
-    def _update_check_succeeded(self, release: UpdateRelease | None, manual: bool) -> None:
+    def _update_check_succeeded(self, result: UpdateCheckResult, manual: bool) -> None:
         self.settings_panel.check_updates_button.setEnabled(True)
         self.settings.last_update_check_at = datetime.now(UTC).isoformat()
-        if release is None:
-            self.settings_panel.set_update_info(__version__, "Application is up to date")
-            if manual: QMessageBox.information(self, tr("Application Updates"), tr("Application is up to date"))
+        if result.status is UpdateCheckStatus.AVAILABLE and result.release is not None:
+            self.settings_panel.set_update_info(
+                DISPLAY_VERSION, "Update available: {version}", version=str(result.release.version),
+            )
+            self._show_available_update(result.release)
             return
-        self.settings_panel.set_update_info(__version__, "Update available: {version}", version=str(release.version))
-        self._show_available_update(release)
+        source = {
+            UpdateCheckStatus.NO_STABLE_RELEASE: "No stable release is available yet",
+            UpdateCheckStatus.TEST_BUILD_AHEAD: "This test build is newer than the latest stable release",
+        }.get(result.status, "Application is up to date")
+        self.settings_panel.set_update_info(DISPLAY_VERSION, source)
+        if manual: QMessageBox.information(self, tr("Application Updates"), tr(source))
 
     def _update_check_failed(self, error: str, manual: bool) -> None:
         self.settings_panel.check_updates_button.setEnabled(True)
-        self.settings_panel.set_update_info(__version__, "Update check failed: {error}", error=error)
+        self.settings_panel.set_update_info(DISPLAY_VERSION, "Update check failed: {error}", error=error)
         if manual: QMessageBox.warning(self, tr("Update Check Failed"), error)
 
     def _show_available_update(self, release: UpdateRelease) -> None:
@@ -1235,7 +1246,9 @@ class MainWindow(QMainWindow):
 
     def _update_download_started(self, release: UpdateRelease) -> None:
         self._downloading_release = release
-        self.settings_panel.set_update_info(__version__, "Downloading version {version}...", version=str(release.version))
+        self.settings_panel.set_update_info(
+            DISPLAY_VERSION, "Downloading version {version}...", version=str(release.version),
+        )
         dialog = QProgressDialog(tr("Downloading update file..."), tr("Cancel"), 0, 100, self)
         dialog.setWindowTitle(tr("Application Updates"))
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1254,7 +1267,7 @@ class MainWindow(QMainWindow):
         self._close_update_progress()
         self._downloading_release = None
         self.settings_panel.set_update_info(
-            __version__,
+            DISPLAY_VERSION,
             "Update downloaded: {version}",
             version=str(update.release.version),
         )
@@ -1272,7 +1285,7 @@ class MainWindow(QMainWindow):
         self._close_update_progress()
         release = self._downloading_release
         self._downloading_release = None
-        self.settings_panel.set_update_info(__version__, "Update download failed: {error}", error=error)
+        self.settings_panel.set_update_info(DISPLAY_VERSION, "Update download failed: {error}", error=error)
         dialog = QMessageBox(self)
         dialog.setWindowTitle(tr("Update File Download Failed"))
         dialog.setIcon(QMessageBox.Icon.Warning)
@@ -1289,7 +1302,7 @@ class MainWindow(QMainWindow):
     def _update_download_cancelled(self) -> None:
         self._close_update_progress()
         self._downloading_release = None
-        self.settings_panel.set_update_info(__version__, "Update download cancelled")
+        self.settings_panel.set_update_info(DISPLAY_VERSION, "Update download cancelled")
 
     def _close_update_progress(self) -> None:
         if not self._update_progress_dialog: return

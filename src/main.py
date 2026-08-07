@@ -14,7 +14,7 @@ from i18n import set_language, system_ui_font
 from logging_bridge import QtLogBridge
 from storage import AppStorage, Settings
 from theme import ThemeError, apply_theme
-from version import __version__
+from version import DISPLAY_VERSION
 from window import MainWindow
 
 
@@ -72,7 +72,7 @@ def main() -> int:
     """建立 application 並啟動 Qt event loop"""
     QCoreApplication.setOrganizationName("Miffon")
     QCoreApplication.setApplicationName("MochiStar")
-    QCoreApplication.setApplicationVersion(__version__)
+    QCoreApplication.setApplicationVersion(DISPLAY_VERSION)
     _configure_platform_identity()
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("MochiStar")

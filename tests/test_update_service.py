@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from i18n import set_language, tr
 from update_controller import UpdateController
 from update_service import (
     DownloadedUpdate,
@@ -17,6 +18,7 @@ from update_service import (
     ManualUpdateInstaller,
     ReleaseAsset,
     SemanticVersion,
+    UpdateCheckStatus,
     UpdateCancelled,
     UpdateDownloader,
     UpdateError,
@@ -63,7 +65,7 @@ def asset_payload(
     }
 
 
-def make_release(content: bytes = b"update") -> UpdateRelease:
+def make_release(content: bytes = b"update", version: str = "1.1.0") -> UpdateRelease:
     asset = ReleaseAsset(
         name="MochiStar-Windows-portable.zip",
         url="https://github.test/MochiStar-Windows-portable.zip",
@@ -71,11 +73,11 @@ def make_release(content: bytes = b"update") -> UpdateRelease:
         sha256=hashlib.sha256(content).hexdigest(),
     )
     return UpdateRelease(
-        tag="v1.1.0",
-        version=SemanticVersion.parse("1.1.0"),
-        title="Version 1.1.0",
+        tag=f"v{version}",
+        version=SemanticVersion.parse(version),
+        title=f"Version {version}",
         notes="Changes",
-        page_url="https://github.test/releases/v1.1.0",
+        page_url=f"https://github.test/releases/v{version}",
         published_at="2026-07-29T00:00:00Z",
         asset=asset,
     )
@@ -109,6 +111,12 @@ def test_manual_update_instructions_are_platform_specific() -> None:
     assert "DMG" in manual_update_instructions("macos")
     assert "Applications" in manual_update_instructions("macos")
     assert "executable permission" in manual_update_instructions("linux")
+    set_language("zh_TW")
+    assert "DMG" in tr(manual_update_instructions("macos"))
+    assert "應用程式" in tr(manual_update_instructions("macos"))
+    assert tr("No stable release is available yet") == "目前尚無正式版本"
+    assert tr("This test build is newer than the latest stable release") == "目前測試版比最新正式版更新"
+    set_language("en")
     with pytest.raises(UpdateError): manual_update_instructions("haiku")
 
 
@@ -256,9 +264,38 @@ def test_update_controller_checks_in_background_and_filters_current_version(app)
 
     controller = UpdateController(Provider(), UpdateDownloader(), "1.0.0", "windows")
     results = []
-    controller.check_succeeded.connect(lambda release, manual: results.append((release, manual)))
+    controller.check_succeeded.connect(lambda result, manual: results.append((result, manual)))
     controller.check(True)
     wait_until(app, lambda: bool(results))
-    assert results[0][0].tag == "v1.1.0"
+    assert results[0][0].status is UpdateCheckStatus.AVAILABLE
+    assert results[0][0].release.tag == "v1.1.0"
     assert results[0][1] is True
+    controller.shutdown()
+
+
+@pytest.mark.parametrize(
+    "current_version,is_test_build,latest_version,status,available_version",
+    [
+        ("1.0.0", False, None, UpdateCheckStatus.NO_STABLE_RELEASE, None),
+        ("1.0.0", False, "1.0.0", UpdateCheckStatus.UP_TO_DATE, None),
+        ("1.0.0", True, "1.0.0", UpdateCheckStatus.AVAILABLE, "1.0.0"),
+        ("1.0.1", True, "1.0.0", UpdateCheckStatus.TEST_BUILD_AHEAD, None),
+        ("1.0.0", True, "1.0.3", UpdateCheckStatus.AVAILABLE, "1.0.3"),
+    ],
+)
+def test_update_controller_classifies_stable_and_test_builds(
+    current_version: str,
+    is_test_build: bool,
+    latest_version: str | None,
+    status: UpdateCheckStatus,
+    available_version: str | None,
+) -> None:
+    controller = UpdateController(
+        object(), UpdateDownloader(), current_version, "windows", is_test_build=is_test_build,
+    )
+
+    result = controller._classify_release(make_release(version=latest_version) if latest_version else None)
+
+    assert result.status is status
+    assert (str(result.release.version) if result.release else None) == available_version
     controller.shutdown()

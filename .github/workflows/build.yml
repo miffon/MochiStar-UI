@@ -2,11 +2,17 @@ name: Build MochiStar
 
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch'
-      && 'Test Build'
+      && format('Test Build {0}-test', inputs.version)
       || format('Release MochiStar {0}', github.ref_name) }}
       
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Test build version, must match pyproject.toml
+        required: true
+        type: string
+        default: "1.0.0"
   push:
     tags:
       - "v*"
@@ -17,14 +23,19 @@ permissions:
 jobs:
   validate-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.project_version.outputs.version }}
+      display_version: ${{ steps.project_version.outputs.display_version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Validate release tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Validate project version
+        id: project_version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
           import os
@@ -38,16 +49,32 @@ jobs:
           runtime_match = re.search(r'^__version__ = "([^"]+)"$', version_source, re.MULTILINE)
           if not runtime_match or runtime_match.group(1) != version:
               raise SystemExit("Package __version__ does not match pyproject.toml")
-          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-              raise SystemExit(f"Release tag must use vMAJOR.MINOR.PATCH: {tag}")
-          if tag != f"v{version}":
-              raise SystemExit(f"Release tag {tag} does not match project version {version}")
-          print(f"Validated {tag}")
+
+          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+              if os.environ["INPUT_VERSION"] != version:
+                  raise SystemExit(f"Test build version {os.environ['INPUT_VERSION']} does not match project version {version}")
+          elif os.environ["GITHUB_REF"].startswith("refs/tags/"):
+              if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+                  raise SystemExit(f"Release tag must use vMAJOR.MINOR.PATCH: {tag}")
+              if tag != f"v{version}":
+                  raise SystemExit(f"Release tag {tag} does not match project version {version}")
+
+          display_version = f"{version}-test" if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" else version
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"display_version={display_version}\n")
+          print(f"Validated {display_version}")
           PY
 
   build-windows:
+    name: Windows ${{ needs['validate-version'].outputs.display_version }}
     needs: validate-version
     runs-on: windows-latest
+    env:
+      ARTIFACT_NAME: >-
+        ${{ github.event_name == 'workflow_dispatch'
+            && format('MochiStar-Windows-portable-{0}.zip', needs['validate-version'].outputs.display_version)
+            || 'MochiStar-Windows-portable.zip' }}
 
     steps:
       - name: Checkout
@@ -56,10 +83,12 @@ jobs:
       - name: Configure release repository
         shell: pwsh
         run: |
+          $isTestBuild = $env:GITHUB_EVENT_NAME -eq "workflow_dispatch"
           Set-Content -Path src/release_config.py -Encoding utf8 -Value @(
             '"""保存 packaging workflow 注入的 Release 設定"""'
             ''
             "GITHUB_REPOSITORY = `"$env:GITHUB_REPOSITORY`""
+            "IS_TEST_BUILD = $isTestBuild"
           )
 
       - name: Install uv
@@ -147,25 +176,35 @@ jobs:
           $launcher.WaitForExit(10000) | Out-Null
           if (-not $launcher.HasExited) { Stop-Process -Id $launcher.Id -Force }
 
-          Compress-Archive -Path artifact\MochiStar -DestinationPath MochiStar-Windows-portable.zip
+          Compress-Archive -Path artifact\MochiStar -DestinationPath $env:ARTIFACT_NAME
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: MochiStar-Windows-portable
-          path: MochiStar-Windows-portable.zip
+          path: ${{ env.ARTIFACT_NAME }}
           if-no-files-found: error
+          archive: false
 
   build-macos:
+    name: macOS ${{ needs['validate-version'].outputs.display_version }}
     needs: validate-version
     runs-on: macos-latest
+    env:
+      ARTIFACT_NAME: >-
+        ${{ github.event_name == 'workflow_dispatch'
+            && format('MochiStar-macOS-installer-{0}.dmg', needs['validate-version'].outputs.display_version)
+            || 'MochiStar-macOS-installer.dmg' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Configure release repository
-        run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then is_test_build=True; else is_test_build=False; fi
+          printf '%s\n\nGITHUB_REPOSITORY = "%s"\nIS_TEST_BUILD = %s\n' \
+            '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" "$is_test_build" \
+            > src/release_config.py
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
@@ -217,7 +256,7 @@ jobs:
           chmod +x artifact/dmg-root/MochiStar.app/Contents/MacOS/*
           xattr -cr artifact/dmg-root/MochiStar.app
           codesign --force --deep --sign - artifact/dmg-root/MochiStar.app
-          hdiutil create -volname MochiStar -srcfolder artifact/dmg-root -ov -format UDZO MochiStar-macOS-installer.dmg
+          hdiutil create -volname MochiStar -srcfolder artifact/dmg-root -ov -format UDZO "$ARTIFACT_NAME"
 
       - name: Validate macOS DMG
         run: |
@@ -228,7 +267,7 @@ jobs:
             rmdir "$mount_path" 2>/dev/null || true
           }
           trap cleanup EXIT
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount_path" MochiStar-macOS-installer.dmg
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_path" "$ARTIFACT_NAME"
           test -d "$mount_path/MochiStar.app"
           test -L "$mount_path/Applications"
           test "$(readlink "$mount_path/Applications")" = "/Applications"
@@ -238,20 +277,30 @@ jobs:
       - name: Upload macOS build
         uses: actions/upload-artifact@v7
         with:
-          name: MochiStar-macOS-installer
-          path: MochiStar-macOS-installer.dmg
+          path: ${{ env.ARTIFACT_NAME }}
           if-no-files-found: error
+          archive: false
 
   build-linux:
+    name: Linux ${{ needs['validate-version'].outputs.display_version }}
     needs: validate-version
     runs-on: ubuntu-latest
+    env:
+      ARTIFACT_NAME: >-
+        ${{ github.event_name == 'workflow_dispatch'
+            && format('MochiStar-Linux-{0}.tar.gz', needs['validate-version'].outputs.display_version)
+            || 'MochiStar-Linux.tar.gz' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Configure release repository
-        run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then is_test_build=True; else is_test_build=False; fi
+          printf '%s\n\nGITHUB_REPOSITORY = "%s"\nIS_TEST_BUILD = %s\n' \
+            '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" "$is_test_build" \
+            > src/release_config.py
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install --yes libegl1 patchelf
@@ -314,14 +363,14 @@ jobs:
           fi
           kill "$application_pid"
           wait "$application_pid" || true
-          tar -C artifact -czf MochiStar-Linux.tar.gz MochiStar
+          tar -C artifact -czf "$ARTIFACT_NAME" MochiStar
 
       - name: Upload Linux build
         uses: actions/upload-artifact@v7
         with:
-          name: MochiStar-Linux
-          path: MochiStar-Linux.tar.gz
+          path: ${{ env.ARTIFACT_NAME }}
           if-no-files-found: error
+          archive: false
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -339,14 +388,15 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: release-assets
+          merge-multiple: true
 
       - name: Collect release files
         run: |
           set -euo pipefail
           mkdir -p release-files
-          cp release-assets/MochiStar-Windows-portable/MochiStar-Windows-portable.zip release-files/
-          cp release-assets/MochiStar-macOS-installer/MochiStar-macOS-installer.dmg release-files/
-          cp release-assets/MochiStar-Linux/MochiStar-Linux.tar.gz release-files/
+          cp release-assets/MochiStar-Windows-portable.zip release-files/
+          cp release-assets/MochiStar-macOS-installer.dmg release-files/
+          cp release-assets/MochiStar-Linux.tar.gz release-files/
 
       - name: Build release notes
         run: |

@@ -8,6 +8,7 @@ import threading
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -87,6 +88,23 @@ class UpdateRelease:
     page_url: str
     published_at: str
     asset: ReleaseAsset | None
+
+
+class UpdateCheckStatus(StrEnum):
+    """描述正式版檢查結果"""
+
+    AVAILABLE = "available"
+    UP_TO_DATE = "up_to_date"
+    NO_STABLE_RELEASE = "no_stable_release"
+    TEST_BUILD_AHEAD = "test_build_ahead"
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateCheckResult:
+    """保存更新檢查狀態與可下載的正式版"""
+
+    status: UpdateCheckStatus
+    release: UpdateRelease | None = None
 
 
 @dataclass(frozen=True, slots=True)

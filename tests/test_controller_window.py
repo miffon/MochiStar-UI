@@ -452,6 +452,22 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     window._check_for_updates(True)
     assert update_checks == [False, True]
 
+    information_messages = []
+    monkeypatch.setattr(
+        window_module.QMessageBox, "information",
+        lambda _parent, _title, message: information_messages.append(message),
+    )
+    no_release = window_module.UpdateCheckResult(window_module.UpdateCheckStatus.NO_STABLE_RELEASE)
+    window._update_check_succeeded(no_release, False)
+    assert window.settings_panel.update_status_label.text() == "No stable release is available yet"
+    assert information_messages == []
+    window._update_check_succeeded(no_release, True)
+    assert information_messages == ["No stable release is available yet"]
+    window._update_check_succeeded(
+        window_module.UpdateCheckResult(window_module.UpdateCheckStatus.TEST_BUILD_AHEAD), False,
+    )
+    assert window.settings_panel.update_status_label.text() == "This test build is newer than the latest stable release"
+
     window.settings.manual_ffmpeg_enabled = True
     window.settings.ffmpeg_bin_dir = "C:/custom"
     monkeypatch.setattr(window_module.QMessageBox, "question", lambda *args: window_module.QMessageBox.StandardButton.Yes)
