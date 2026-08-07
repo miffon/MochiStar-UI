@@ -61,11 +61,11 @@ from theme import ThemeError, apply_theme, theme_color
 from update_controller import UpdateController
 from update_service import (
     DownloadedUpdate,
-    GitHubReleaseProvider,
     ManualUpdateInstaller,
+    QtGitHubReleaseProvider,
+    QtUpdateDownloader,
     UpdateCheckResult,
     UpdateCheckStatus,
-    UpdateDownloader,
     UpdateRelease,
     manual_update_instructions,
 )
@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
         storage: AppStorage,
         log_bridge: QtLogBridge | None = None,
         update_provider: Any | None = None,
-        update_downloader: UpdateDownloader | None = None,
+        update_downloader: Any | None = None,
         dependency_inspector: ExternalToolInspector | None = None,
     ):
         super().__init__()
@@ -248,9 +248,9 @@ class MainWindow(QMainWindow):
         self.task_controller = TaskController(
             storage, self.media_service, self.ffmpeg_service, self.settings.worker_count
         )
-        provider = update_provider or GitHubReleaseProvider()
+        provider = update_provider or QtGitHubReleaseProvider()
         self.update_controller = UpdateController(
-            provider, update_downloader or UpdateDownloader(), __version__, is_test_build=IS_TEST_BUILD,
+            provider, update_downloader or QtUpdateDownloader(), __version__, is_test_build=IS_TEST_BUILD,
         )
         self.update_installer = ManualUpdateInstaller(self._open_directory)
         self._updates_configured = bool(getattr(provider, "repository", True))

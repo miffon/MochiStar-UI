@@ -648,6 +648,7 @@ class AnalyzePanel(QWidget):
         # 常用下載 options
         options_group = QGroupBox("Download Options")
         options_form = QFormLayout(options_group)
+        options_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         options_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         options_form.addRow("Preset", self.preset_combo)
         options_form.addRow("Resolution", self.resolution_combo)
@@ -657,6 +658,7 @@ class AnalyzePanel(QWidget):
 
         destination_group = QGroupBox("Output and Cookies")
         destination_form = QFormLayout(destination_group)
+        destination_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         destination_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         output_layout = QHBoxLayout()
         output_layout.addWidget(self.output_directory_edit, 1)
@@ -676,6 +678,7 @@ class AnalyzePanel(QWidget):
         self.advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(self.advanced_group)
         format_selection = QFormLayout()
+        format_selection.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         format_selection.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         format_selection.addRow("Video Format", self.video_format_combo)
         format_selection.addRow("Audio Format", self.audio_format_combo)
@@ -995,6 +998,7 @@ class SubtitlePanel(QWidget):
         selection_buttons.addStretch()
         destination_group = QGroupBox("Output and Cookies")
         destination_form = QFormLayout(destination_group)
+        destination_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         output_layout = QHBoxLayout()
         output_layout.addWidget(self.output_directory_edit, 1)
         output_layout.addWidget(self.output_button)

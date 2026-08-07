@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from main import _acquire_instance_lock, _initialize_language
+from main import _acquire_instance_lock, _initialize_language, _run_update_smoke_test
 from storage import AppStorage, Settings
 
 
@@ -47,3 +47,15 @@ def test_first_launch_uses_english_for_unknown_selection(tmp_path: Path) -> None
 
     assert _initialize_language(storage, Settings(), lambda: "unknown") == "en"
     assert storage.load_settings().language == "en"
+
+
+def test_update_smoke_test_checks_current_platform() -> None:
+    class Provider:
+        def __init__(self): self.platforms = []
+
+        def check_latest(self, platform_key): self.platforms.append(platform_key)
+
+    provider = Provider()
+
+    assert _run_update_smoke_test(provider) == 0
+    assert len(provider.platforms) == 1

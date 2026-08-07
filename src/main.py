@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Callable
@@ -10,10 +11,12 @@ from PySide6.QtCore import QCoreApplication, QLockFile
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from executable_finder import configure_macos_executable_path
 from i18n import set_language, system_ui_font
 from logging_bridge import QtLogBridge
 from storage import AppStorage, Settings
 from theme import ThemeError, apply_theme
+from update_service import QtGitHubReleaseProvider, current_platform_key
 from version import DISPLAY_VERSION
 from window import MainWindow
 
@@ -68,12 +71,22 @@ def _initialize_language(
     return settings.language
 
 
+def _run_update_smoke_test(provider: QtGitHubReleaseProvider | None = None) -> int:
+    """讓 packaged application 驗證 Qt network update request"""
+    (provider or QtGitHubReleaseProvider()).check_latest(current_platform_key())
+    return 0
+
+
 def main() -> int:
     """建立 application 並啟動 Qt event loop"""
+    configure_macos_executable_path(os.environ)
     QCoreApplication.setOrganizationName("Miffon")
     QCoreApplication.setApplicationName("MochiStar")
     QCoreApplication.setApplicationVersion(DISPLAY_VERSION)
     _configure_platform_identity()
+    if os.environ.get("MOCHISTAR_UPDATE_SMOKE_TEST") == "1":
+        app = QCoreApplication(sys.argv)
+        return _run_update_smoke_test()
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("MochiStar")
     app.setWindowIcon(QIcon(str(_application_icon_path()))) # 設定工作列與視窗 icon

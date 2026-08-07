@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from executable_finder import find_executable
 from media_service import LogCallback, ProgressCallback, ServiceCancelled, _notify_progress
 from models import ConversionOptions, ReplacementOptions, TaskRecord
 
@@ -100,7 +101,7 @@ class FFmpegService:
     def detect_tools(self) -> dict[str, str | None]:
         """重新偵測 PATH 內的外部工具並回傳實際路徑"""
         self.tool_paths = {
-            name: shutil.which(name, path=self.tool_directory) if self.tool_directory else self.which(name)
+            name: find_executable(name, self.tool_directory, self.which)
             for name in ("ffmpeg", "ffprobe")
         }
         return dict(self.tool_paths)

@@ -4,6 +4,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -14,7 +15,6 @@ from update_service import (
     UpdateCheckResult,
     UpdateCheckStatus,
     UpdateCancelled,
-    UpdateDownloader,
     UpdateRelease,
     current_platform_key,
 )
@@ -39,7 +39,7 @@ class UpdateController(QObject):
     def __init__(
         self,
         provider: ReleaseProvider,
-        downloader: UpdateDownloader,
+        downloader: Any,
         current_version: str,
         platform_key: str | None = None,
         is_test_build: bool = False,

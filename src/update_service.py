@@ -12,6 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from qt_network import QtNetworkCancelled, QtNetworkClient, QtNetworkError
 from release_config import GITHUB_REPOSITORY
 
 _VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -166,8 +167,7 @@ class GitHubReleaseProvider:
 
     def check_latest(self, platform_key: str) -> UpdateRelease | None:
         if not self.repository: raise UpdateNotConfigured("GitHub repository is not configured")
-        asset_name = _PLATFORM_ASSETS.get(platform_key)
-        if not asset_name: raise UpdateError(f"Unsupported update platform: {platform_key}")
+        self._asset_name(platform_key)
         request = urllib.request.Request(
             f"https://api.github.com/repos/{self.repository}/releases?per_page=30",
             headers={
@@ -180,8 +180,16 @@ class GitHubReleaseProvider:
             with self.urlopen(request, timeout=self.timeout) as response:
                 raw_payload = response.read(2 * 1024 * 1024 + 1)
                 if len(raw_payload) > 2 * 1024 * 1024: raise UpdateError("GitHub releases response is too large")
-                payload = json.loads(raw_payload)
+                return self._parse_payload(raw_payload, platform_key)
         except (OSError, ValueError, json.JSONDecodeError) as error:
+            raise UpdateError(f"Unable to read GitHub releases: {error}") from error
+
+    @classmethod
+    def _parse_payload(cls, raw_payload: bytes, platform_key: str) -> UpdateRelease | None:
+        asset_name = cls._asset_name(platform_key)
+        try:
+            payload = json.loads(raw_payload)
+        except (ValueError, json.JSONDecodeError) as error:
             raise UpdateError(f"Unable to read GitHub releases: {error}") from error
         if not isinstance(payload, list): raise UpdateError("GitHub releases response is not a list")
 
@@ -190,9 +198,15 @@ class GitHubReleaseProvider:
             for item in payload
             if isinstance(item, Mapping)
             if item.get("draft") is not True
-            if (release := self._parse_release(item, asset_name)) is not None
+            if (release := cls._parse_release(item, asset_name)) is not None
         ]
         return max(releases, key=lambda release: release.version) if releases else None
+
+    @staticmethod
+    def _asset_name(platform_key: str) -> str:
+        asset_name = _PLATFORM_ASSETS.get(platform_key)
+        if not asset_name: raise UpdateError(f"Unsupported update platform: {platform_key}")
+        return asset_name
 
     @staticmethod
     def _parse_release(values: Mapping[str, Any], asset_name: str) -> UpdateRelease | None:
@@ -239,6 +253,38 @@ class GitHubReleaseProvider:
         return ReleaseAsset(name=name, url=url, size=size, sha256=sha256)
 
 
+class QtGitHubReleaseProvider(GitHubReleaseProvider):
+    """使用 Qt network stack 取得最新穩定版"""
+
+    def __init__(
+        self,
+        repository: str = GITHUB_REPOSITORY,
+        client: QtNetworkClient | None = None,
+        timeout: float = 15.0,
+    ):
+        self.repository = repository.strip().strip("/")
+        self.client = client or QtNetworkClient()
+        self.timeout = timeout
+
+    def check_latest(self, platform_key: str) -> UpdateRelease | None:
+        if not self.repository: raise UpdateNotConfigured("GitHub repository is not configured")
+        self._asset_name(platform_key)
+        try:
+            payload = self.client.read(
+                f"https://api.github.com/repos/{self.repository}/releases?per_page=30",
+                {
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "MochiStar-Update-Checker",
+                },
+                self.timeout,
+                2 * 1024 * 1024,
+            )
+        except QtNetworkError as error:
+            raise UpdateError(f"Unable to read GitHub releases: {error}") from error
+        return self._parse_payload(payload, platform_key)
+
+
 class UpdateDownloader:
     """串流下載 release asset 並驗證大小與 SHA-256"""
 
@@ -282,3 +328,48 @@ class UpdateDownloader:
             except OSError:
                 pass
             raise
+
+
+class QtUpdateDownloader:
+    """使用 Qt network stack 串流下載並驗證 release asset"""
+
+    def __init__(self, client: QtNetworkClient | None = None, timeout: float = 30.0):
+        self.client = client or QtNetworkClient()
+        self.timeout = timeout
+
+    def download(
+        self,
+        release: UpdateRelease,
+        target_dir: Path,
+        progress: Callable[[int, int], None],
+        cancel_event: threading.Event,
+    ) -> DownloadedUpdate:
+        asset = release.asset
+        if asset is None: raise UpdateError("Release does not include a verified asset for this platform")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        final_path = target_dir / asset.name
+        partial_path = target_dir / f"{asset.name}.part"
+        try:
+            result = self.client.download(
+                asset.url,
+                {"User-Agent": "MochiStar-Update-Downloader"},
+                self.timeout,
+                partial_path,
+                lambda received: progress(received, asset.size),
+                cancel_event,
+            )
+            if cancel_event.is_set(): raise UpdateCancelled("Update download was cancelled")
+            if result.size != asset.size:
+                raise UpdateError(f"Update size mismatch: expected {asset.size}, received {result.size}")
+            if result.sha256 != asset.sha256: raise UpdateError("Update SHA-256 verification failed")
+            partial_path.replace(final_path)
+            return DownloadedUpdate(release=release, path=final_path)
+        except QtNetworkCancelled as error:
+            raise UpdateCancelled("Update download was cancelled") from error
+        except QtNetworkError as error:
+            raise UpdateError(f"Unable to download update: {error}") from error
+        finally:
+            try:
+                partial_path.unlink(missing_ok=True)
+            except OSError:
+                pass

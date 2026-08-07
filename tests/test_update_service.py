@@ -5,17 +5,21 @@ import io
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QApplication
 
 from i18n import set_language, tr
+from qt_network import QtDownloadResult, QtNetworkCancelled, QtNetworkClient, QtNetworkError
 from update_controller import UpdateController
 from update_service import (
     DownloadedUpdate,
     GitHubReleaseProvider,
     ManualUpdateInstaller,
+    QtGitHubReleaseProvider,
+    QtUpdateDownloader,
     ReleaseAsset,
     SemanticVersion,
     UpdateCheckStatus,
@@ -201,6 +205,40 @@ def test_github_provider_reports_configuration_payload_and_network_errors() -> N
     with pytest.raises(UpdateError): GitHubReleaseProvider("owner/repo", urlopen=timeout).check_latest("windows")
 
 
+def test_qt_github_provider_reads_and_parses_release_payload() -> None:
+    content = b"verified update"
+
+    class Client:
+        def read(self, url, headers, timeout, max_size):
+            assert url == "https://api.github.com/repos/owner/repo/releases?per_page=30"
+            assert headers["User-Agent"] == "MochiStar-Update-Checker"
+            assert timeout == 12
+            assert max_size == 2 * 1024 * 1024
+            return json.dumps([release_payload("v1.2.0", asset_payload(content))]).encode()
+
+    release = QtGitHubReleaseProvider("owner/repo", Client(), 12).check_latest("windows")
+
+    assert release is not None
+    assert str(release.version) == "1.2.0"
+    assert release.asset is not None
+
+
+def test_qt_github_provider_translates_network_errors() -> None:
+    class Client:
+        def read(self, *_args, **_kwargs):
+            raise QtNetworkError("connection failed")
+
+    with pytest.raises(UpdateError, match="connection failed"):
+        QtGitHubReleaseProvider("owner/repo", Client()).check_latest("macos")
+
+
+def test_qt_network_client_runs_inside_controller_style_worker(app) -> None:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(QtNetworkClient().read, "data:text/plain,hello", {}, 2, 100).result()
+
+    assert result == b"hello"
+
+
 def test_update_downloader_verifies_and_atomically_finishes(tmp_path: Path) -> None:
     content = b"downloaded update content"
     release = make_release(content)
@@ -254,6 +292,45 @@ def test_update_downloader_honors_cancellation_and_cleans_partial_file(tmp_path:
 
     with pytest.raises(UpdateCancelled):
         downloader.download(release, tmp_path, lambda *_args: None, cancel_event)
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_qt_update_downloader_verifies_and_atomically_finishes(tmp_path: Path) -> None:
+    content = b"downloaded with Qt"
+    release = make_release(content)
+    progress = []
+
+    class Client:
+        def download(self, url, headers, timeout, output_path, progress_cb, cancel_event):
+            assert url == release.asset.url
+            assert headers["User-Agent"] == "MochiStar-Update-Downloader"
+            assert timeout == 25
+            assert not cancel_event.is_set()
+            output_path.write_bytes(content)
+            progress_cb(len(content))
+            return QtDownloadResult(len(content), hashlib.sha256(content).hexdigest())
+
+    update = QtUpdateDownloader(Client(), 25).download(
+        release, tmp_path, lambda *values: progress.append(values), threading.Event(),
+    )
+
+    assert update.path.read_bytes() == content
+    assert progress == [(len(content), len(content))]
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_qt_update_downloader_translates_cancellation_and_cleans_partial_file(tmp_path: Path) -> None:
+    release = make_release()
+
+    class Client:
+        def download(self, _url, _headers, _timeout, output_path, _progress, _cancel_event):
+            output_path.write_bytes(b"partial")
+            raise QtNetworkCancelled("cancelled")
+
+    with pytest.raises(UpdateCancelled):
+        QtUpdateDownloader(Client()).download(
+            release, tmp_path, lambda *_args: None, threading.Event(),
+        )
     assert not list(tmp_path.glob("*.part"))
 
 

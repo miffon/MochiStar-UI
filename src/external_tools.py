@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal
 
+from executable_finder import find_executable
+
 
 ToolState = Literal["available", "missing", "outdated", "invalid"]
 
@@ -94,10 +96,7 @@ class ExternalToolInspector:
         return DependencyReport(ffmpeg, ffprobe, runtimes)
 
     def _find(self, executable: str, directory: str) -> str:
-        try:
-            return str(self.which(executable, path=directory) or "") if directory else str(self.which(executable) or "")
-        except TypeError:
-            return str(self.which(executable) or "")
+        return str(find_executable(executable, directory, self.which) or "")
 
     def _inspect_program(
         self, key: str, name: str, executable: str, arguments: tuple[str, ...], directory: str
@@ -233,7 +232,7 @@ def installation_guides(
             "js_runtime": InstallGuide("winget install --exact --id DenoLand.Deno --source winget" if winget else "", deno_url),
         }
     if platform == "darwin":
-        brew = bool(which("brew"))
+        brew = bool(find_executable("brew", which=which, platform_name=platform))
         return {
             "ffmpeg": InstallGuide(
                 "brew install ffmpeg" if brew else "", ffmpeg_url,

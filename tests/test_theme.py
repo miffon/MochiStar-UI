@@ -104,6 +104,21 @@ def test_apply_theme_sets_application_stylesheet():
     assert stylesheet
 
 
+def test_macos_typography_is_larger_without_changing_other_platforms():
+    windows_stylesheet = load_theme_stylesheet(platform_name="win32")
+    linux_stylesheet = load_theme_stylesheet(platform_name="linux")
+    macos_stylesheet = load_theme_stylesheet(platform_name="darwin")
+
+    assert re.search(r"QWidget\s*\{[^}]*font-size:\s*10pt", windows_stylesheet, re.DOTALL)
+    assert re.search(r"QWidget\s*\{[^}]*font-size:\s*10pt", linux_stylesheet, re.DOTALL)
+    assert re.search(r"QWidget\s*\{[^}]*font-size:\s*13pt", macos_stylesheet, re.DOTALL)
+    assert re.search(r'QLabel\[role="pageTitle"\]\s*\{[^}]*font-size:\s*21pt', macos_stylesheet, re.DOTALL)
+    assert re.search(
+        r'QLabel\[role="pageSubtitle"\],[^{]*\{[^}]*font-size:\s*13pt', macos_stylesheet, re.DOTALL
+    )
+    assert re.search(r'QLabel\[role="brandTitle"\]\s*\{[^}]*font-size:\s*17pt', macos_stylesheet, re.DOTALL)
+
+
 def test_cute_light_theme_and_hsl_mix_are_deterministic():
     values = tomllib.loads(theme._read_resource_text("assets", "themes", "cute_light.toml"))
     palette = values["palette"]

@@ -12,6 +12,7 @@ from typing import Any, Callable
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import remove_terminal_sequences
 
+from executable_finder import find_executable
 from models import CookieConfig, DownloadOptions, FormatInfo, MediaInfo, SubtitleOptions, SubtitleTrack, TaskRecord
 
 ProgressCallback = Callable[..., None]
@@ -530,5 +531,5 @@ class YtDlpService:
 
     def _find_executable(self, name: str, directory: str = "") -> str | None:
         """從指定目錄或系統 PATH 尋找 executable"""
-        if directory: return shutil.which(name, path=directory)
-        return self.which(name)
+        if directory: return find_executable(name, directory, shutil.which)
+        return find_executable(name, which=self.which)

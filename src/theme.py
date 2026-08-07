@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 import re
+import sys
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -17,6 +18,8 @@ class ThemeError(ValueError):
 _THEME_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
 _HEX_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_POINT_SIZE_PATTERN = re.compile(r"^(\d+(?:\.\d+)?)pt$")
+_MACOS_DEFAULT_FONT_SIZE_PT = 13.0
 _COLOR_RECIPES = {
     "panel_background": ("background", "surface", 0.18),
     "panel_elevated": ("background", "surface", 0.36),
@@ -84,6 +87,18 @@ def _flatten_tokens(values: Mapping[str, Any], prefix: str = "") -> dict[str, st
         else:
             raise ThemeError(f"Unsupported theme token value: {name}")
     return tokens
+
+
+def _normalize_platform_typography(tokens: dict[str, str], platform_name: str) -> None:
+    """依 macOS 官方預設字級調整 typography 並保留原有層級差距"""
+    if platform_name != "darwin": return
+    base_match = _POINT_SIZE_PATTERN.fullmatch(tokens.get("typography.font_size", ""))
+    if not base_match: return
+    offset = _MACOS_DEFAULT_FONT_SIZE_PT - float(base_match.group(1))
+    for name in ("font_size", "title_size", "subtitle_size", "brand_size"):
+        key = f"typography.{name}"
+        match = _POINT_SIZE_PATTERN.fullmatch(tokens.get(key, ""))
+        if match: tokens[key] = f"{float(match.group(1)) + offset:g}pt"
 
 
 def mix_hsl(source: str, target: str, amount: float) -> str:
@@ -155,7 +170,7 @@ def _derive_colors(theme_values: Mapping[str, Any]) -> dict[str, str]:
     return colors
 
 
-def load_theme_stylesheet(theme_name: str = "starlit_night") -> str:
+def load_theme_stylesheet(theme_name: str = "starlit_night", platform_name: str | None = None) -> str:
     """載入 TOML theme 並將 token 套用到共用 QSS"""
     if not _THEME_NAME_PATTERN.fullmatch(theme_name):
         raise ThemeError(f"Invalid theme name: {theme_name!r}")
@@ -167,6 +182,7 @@ def load_theme_stylesheet(theme_name: str = "starlit_night") -> str:
     tokens = _flatten_tokens({
         key: value for key, value in theme_values.items() if key not in {"palette", "variation"}
     })
+    _normalize_platform_typography(tokens, sys.platform if platform_name is None else platform_name)
     colors = _derive_colors(theme_values)
     _CURRENT_THEME_COLORS.update(colors)
     tokens.update({f"colors.{name}": value for name, value in colors.items()})

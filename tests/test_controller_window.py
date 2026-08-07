@@ -378,7 +378,7 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     monkeypatch.setattr(window_module, "YtDlpService", IdleMedia)
     storage = AppStorage(tmp_path / "app")
     storage.save_settings(Settings(output_dir=str(tmp_path), language="en"))
-    window = window_module.MainWindow(storage, update_provider=window_module.GitHubReleaseProvider(""))
+    window = window_module.MainWindow(storage, update_provider=window_module.QtGitHubReleaseProvider(""))
     assert window.panel_stack.count() == 8
     assert list(window._panels) == [
         "analyze", "subtitle", "file_analysis", "conversion", "replacement", "queue", "log", "settings",

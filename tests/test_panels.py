@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QPoint, QUrl, Qt
 from PySide6.QtWidgets import (
+    QFormLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -99,6 +100,10 @@ def test_queue_error_translates_youtube_block_summary(app) -> None:
 
 def test_analyze_panel_emits_payload_and_displays_media(app):
     panel = AnalyzePanel()
+    assert all(
+        layout.fieldGrowthPolicy() == QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        for layout in panel.findChildren(QFormLayout)
+    )
     assert panel.metadata_text.text() == ""
     assert panel.thumbnail_label.text() == ""
     analyze_width = panel.analyze_button.minimumWidth()
@@ -143,6 +148,16 @@ def test_analyze_panel_emits_payload_and_displays_media(app):
     assert panel.layout().itemAt(0).layout().itemAtPosition(0, 1).widget() is panel.add_button
     assert panel.metadata_group.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
     assert panel.advanced_group.layout().count() == 1
+
+
+def test_subtitle_panel_fields_expand_across_available_width(app):
+    panel = SubtitlePanel()
+    forms = panel.findChildren(QFormLayout)
+
+    assert forms
+    assert all(
+        layout.fieldGrowthPolicy() == QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow for layout in forms
+    )
 
 
 def test_advanced_format_summary_limits_decimal_places():
