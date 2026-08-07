@@ -492,6 +492,29 @@ def test_replacement_panel_builds_single_source_payload_and_persists_no_paths(ap
     assert not panel.save_preset_button.isHidden()
 
 
+@pytest.mark.parametrize(
+    "text,seconds",
+    [("10.5", 10.5), ("2000", 2000), ("1:30", 90), ("1:1:30.3", 3690.3)],
+)
+def test_replacement_duration_parses_components_from_seconds_to_hours(text: str, seconds: float) -> None:
+    assert ReplacementPanel.parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize("text", ["", "1:", ":30", "1:60", "1:1:60", "1:2:3:4", "-1", "nan"])
+def test_replacement_duration_rejects_incomplete_or_out_of_range_values(text: str) -> None:
+    assert ReplacementPanel.parse_duration(text) is None
+
+
+def test_replacement_duration_placeholder_follows_language(app) -> None:
+    panel = ReplacementPanel()
+    set_language("zh_TW")
+    translate_widget_tree(panel)
+    assert panel.custom_duration_edit.placeholderText() == "小時:分鐘:秒.毫秒"
+    set_language("en")
+    translate_widget_tree(panel)
+    assert panel.custom_duration_edit.placeholderText() == "Hours:Minutes:Seconds.ms"
+
+
 def test_queue_model_and_action_signals(app):
     panel = QueuePanel()
     assert panel.table.horizontalHeader().sortIndicatorSection() == -1

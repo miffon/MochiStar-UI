@@ -2856,7 +2856,7 @@ class ReplacementPanel(ConversionPanel):
         for label, value in (("Longest Source", "longest"), ("Shortest Source", "shortest"), ("Custom", "custom")):
             self.duration_mode_combo.addItem(label, value)
         self.custom_duration_edit = QLineEdit()
-        self.custom_duration_edit.setPlaceholderText("HH:MM:SS.mmm")
+        self.custom_duration_edit.setPlaceholderText("Hours:Minutes:Seconds.ms")
         self.aspect_ratio_combo = NoWheelComboBox()
         for label, value in (("Source", "source"), ("16:9", "16:9"), ("9:16", "9:16"), ("1:1", "1:1")):
             self.aspect_ratio_combo.addItem(label, value)
@@ -2887,7 +2887,7 @@ class ReplacementPanel(ConversionPanel):
         output_layout.addWidget(self.output_button)
         _add_option_row(common, "Output Folder", output_layout)
         _add_option_row(common, "Total Duration", self.duration_mode_combo, "Choose the finished timeline length")
-        _add_option_row(common, "Custom Duration", self.custom_duration_edit, "Enter a duration such as 00:03:12.500")
+        _add_option_row(common, "Custom Duration", self.custom_duration_edit, "Enter seconds, MM:SS, or HH:MM:SS.mmm")
         _add_option_row(common, "Aspect Ratio", self.aspect_ratio_combo, "Keep the source shape or use a common video canvas")
         _add_option_row(common, "Image Fit", self.fit_mode_combo, "Show the whole image with black bars or crop it to fill the canvas")
         _add_option_row(common, "Cut Head", self.trim_start_spin, "Remove this amount from the beginning of the finished timeline")
@@ -2945,14 +2945,17 @@ class ReplacementPanel(ConversionPanel):
 
     @staticmethod
     def parse_duration(text: str) -> float | None:
-        """解析 HH:MM:SS.mmm 或純秒數"""
+        """由右向左解析秒、分:秒或時:分:秒"""
         value = text.strip()
         if not value: return None
         try:
-            if ":" not in value: return float(value)
             parts = value.split(":")
-            if len(parts) != 3: return None
-            hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
+            if not 1 <= len(parts) <= 3 or any(not part for part in parts): return None
+            seconds = float(parts[-1])
+            if not math.isfinite(seconds) or seconds < 0: return None
+            if len(parts) == 1: return seconds
+            minutes = int(parts[-2])
+            hours = int(parts[-3]) if len(parts) == 3 else 0
             if hours < 0 or not 0 <= minutes < 60 or not 0 <= seconds < 60: return None
             return hours * 3600 + minutes * 60 + seconds
         except ValueError:

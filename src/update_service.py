@@ -15,8 +15,8 @@ from release_config import GITHUB_REPOSITORY
 
 _VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _PLATFORM_ASSETS = {
-    "windows": "MochiStar-Windows.zip",
-    "macos": "MochiStar-macOS.zip",
+    "windows": "MochiStar-Windows-portable.zip",
+    "macos": "MochiStar-macOS-installer.dmg",
     "linux": "MochiStar-Linux.tar.gz",
 }
 
@@ -26,8 +26,8 @@ _MANUAL_UPDATE_INSTRUCTIONS = {
         "with the extracted folder. Your settings and queue are stored separately."
     ),
     "macos": (
-        "Close MochiStar, extract the downloaded ZIP file, then drag MochiStar.app to Applications "
-        "and replace the old version. If macOS blocks it, use Open Anyway in Privacy & Security."
+        "Close MochiStar, open the downloaded DMG, then drag MochiStar.app to Applications and replace "
+        "the old version. If macOS blocks it, use Open Anyway in Privacy & Security."
     ),
     "linux": (
         "Close MochiStar, extract the downloaded archive, then replace the old MochiStar folder. "

@@ -82,7 +82,7 @@ jobs:
           --with ordered-set
           --with zstandard
           python -m nuitka
-          --onefile
+          --standalone
           --enable-plugin=pyside6
           --include-package=yt_dlp
           --include-package-data=yt_dlp
@@ -95,21 +95,65 @@ jobs:
           --output-filename=MochiStar.exe
           src/main.py
 
+      - name: Build Windows launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw "Visual Studio C++ build tools were not found" }
+          Import-Module "$installation\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+
+          New-Item -ItemType Directory -Force -Path dist\launcher | Out-Null
+          rc.exe /nologo /fo dist\launcher\launcher.res packaging\windows\launcher.rc
+          if ($LASTEXITCODE -ne 0) { throw "Unable to compile the Windows launcher resources" }
+          cl.exe /nologo /std:c11 /O2 /W4 /MT /Fodist\launcher\launcher.obj packaging\windows\launcher.c dist\launcher\launcher.res user32.lib shell32.lib /link /SUBSYSTEM:WINDOWS /OUT:dist\launcher\MochiStar.exe
+          if ($LASTEXITCODE -ne 0) { throw "Unable to compile the Windows launcher" }
+
       - name: Package Windows artifact
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $executable = Get-Item -Path dist\MochiStar.exe
-          New-Item -ItemType Directory -Force -Path artifact\MochiStar | Out-Null
-          Copy-Item -Path $executable.FullName -Destination artifact\MochiStar\MochiStar.exe
+          $standalone = Get-Item -Path dist\main.dist
+          New-Item -ItemType Directory -Force -Path artifact\MochiStar\app | Out-Null
+          Copy-Item -Path "$($standalone.FullName)\*" -Destination artifact\MochiStar\app -Recurse
+          Copy-Item -Path dist\launcher\MochiStar.exe -Destination artifact\MochiStar\MochiStar.exe
           Copy-Item -Path README.md -Destination artifact\MochiStar\README.md
-          Compress-Archive -Path artifact\MochiStar -DestinationPath MochiStar-Windows.zip
+
+          $rootEntries = @(Get-ChildItem -Path artifact\MochiStar | Select-Object -ExpandProperty Name)
+          $unexpectedRootEntries = @($rootEntries | Where-Object { $_ -notin @("MochiStar.exe", "README.md", "app") })
+          if ($rootEntries.Count -ne 3 -or $unexpectedRootEntries.Count -ne 0) {
+            throw "Windows portable root must contain only MochiStar.exe, README.md, and app"
+          }
+          if (-not (Test-Path artifact\MochiStar\app\MochiStar.exe -PathType Leaf)) { throw "Standalone MochiStar.exe was not packaged" }
+          if (-not (Test-Path artifact\MochiStar\app\assets -PathType Container)) { throw "Standalone assets directory was not packaged" }
+
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $launcher = Start-Process -FilePath (Resolve-Path artifact\MochiStar\MochiStar.exe) -PassThru
+          $child = $null
+          $innerPath = (Resolve-Path artifact\MochiStar\app\MochiStar.exe).Path
+          for ($attempt = 0; $attempt -lt 20 -and -not $child; $attempt++) {
+            Start-Sleep -Milliseconds 500
+            $child = Get-Process -Name MochiStar -ErrorAction SilentlyContinue |
+              Where-Object { $_.Path -eq $innerPath } |
+              Select-Object -First 1
+          }
+          if (-not $child) {
+            if (-not $launcher.HasExited) { Stop-Process -Id $launcher.Id -Force }
+            throw "Windows launcher did not start app\MochiStar.exe"
+          }
+          Stop-Process -Id $child.Id -Force
+          $launcher.WaitForExit(10000) | Out-Null
+          if (-not $launcher.HasExited) { Stop-Process -Id $launcher.Id -Force }
+
+          Compress-Archive -Path artifact\MochiStar -DestinationPath MochiStar-Windows-portable.zip
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: MochiStar-Windows
-          path: MochiStar-Windows.zip
+          name: MochiStar-Windows-portable
+          path: MochiStar-Windows-portable.zip
           if-no-files-found: error
 
   build-macos:
@@ -167,19 +211,35 @@ jobs:
             exit 1
           fi
 
-          mkdir -p artifact
-          cp -R "$app_path" artifact/MochiStar.app
-          cp README.md artifact/README.md
-          chmod +x artifact/MochiStar.app/Contents/MacOS/*
-          xattr -cr artifact/MochiStar.app
-          codesign --force --deep --sign - artifact/MochiStar.app
-          ditto -c -k --sequesterRsrc artifact MochiStar-macOS.zip
+          mkdir -p artifact/dmg-root
+          cp -R "$app_path" artifact/dmg-root/MochiStar.app
+          ln -s /Applications artifact/dmg-root/Applications
+          chmod +x artifact/dmg-root/MochiStar.app/Contents/MacOS/*
+          xattr -cr artifact/dmg-root/MochiStar.app
+          codesign --force --deep --sign - artifact/dmg-root/MochiStar.app
+          hdiutil create -volname MochiStar -srcfolder artifact/dmg-root -ov -format UDZO MochiStar-macOS-installer.dmg
+
+      - name: Validate macOS DMG
+        run: |
+          set -euo pipefail
+          mount_path="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_path" >/dev/null 2>&1 || true
+            rmdir "$mount_path" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_path" MochiStar-macOS-installer.dmg
+          test -d "$mount_path/MochiStar.app"
+          test -L "$mount_path/Applications"
+          test "$(readlink "$mount_path/Applications")" = "/Applications"
+          test "$(find "$mount_path" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = "2"
+          codesign --verify --deep --strict "$mount_path/MochiStar.app"
 
       - name: Upload macOS build
         uses: actions/upload-artifact@v7
         with:
-          name: MochiStar-macOS
-          path: MochiStar-macOS.zip
+          name: MochiStar-macOS-installer
+          path: MochiStar-macOS-installer.dmg
           if-no-files-found: error
 
   build-linux:
@@ -216,7 +276,7 @@ jobs:
           --with ordered-set
           --with zstandard
           python -m nuitka
-          --onefile
+          --standalone
           --enable-plugin=pyside6
           --include-package=yt_dlp
           --include-package-data=yt_dlp
@@ -231,10 +291,29 @@ jobs:
       - name: Package Linux artifact
         run: |
           set -euo pipefail
-          mkdir -p artifact/MochiStar
-          cp dist/MochiStar artifact/MochiStar/MochiStar
+          mkdir -p artifact/MochiStar/app
+          cp -R dist/main.dist/. artifact/MochiStar/app/
+          cp packaging/linux/MochiStar artifact/MochiStar/MochiStar
           cp README.md artifact/MochiStar/README.md
-          chmod +x artifact/MochiStar/MochiStar
+          chmod +x artifact/MochiStar/MochiStar artifact/MochiStar/app/MochiStar
+          mapfile -t root_entries < <(find artifact/MochiStar -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+          expected_entries=(MochiStar README.md app)
+          test "${root_entries[*]}" = "${expected_entries[*]}"
+          test -x artifact/MochiStar/MochiStar
+          test -x artifact/MochiStar/app/MochiStar
+          test -d artifact/MochiStar/app/assets
+          sh -n artifact/MochiStar/MochiStar
+
+          QT_QPA_PLATFORM=offscreen artifact/MochiStar/MochiStar &
+          application_pid=$!
+          sleep 3
+          if ! kill -0 "$application_pid" 2>/dev/null; then
+            wait "$application_pid"
+            echo "Linux launcher did not keep app/MochiStar running"
+            exit 1
+          fi
+          kill "$application_pid"
+          wait "$application_pid" || true
           tar -C artifact -czf MochiStar-Linux.tar.gz MochiStar
 
       - name: Upload Linux build
@@ -265,33 +344,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-files
-          cp release-assets/MochiStar-Windows/MochiStar-Windows.zip release-files/
-          cp release-assets/MochiStar-macOS/MochiStar-macOS.zip release-files/
+          cp release-assets/MochiStar-Windows-portable/MochiStar-Windows-portable.zip release-files/
+          cp release-assets/MochiStar-macOS-installer/MochiStar-macOS-installer.dmg release-files/
           cp release-assets/MochiStar-Linux/MochiStar-Linux.tar.gz release-files/
 
       - name: Build release notes
         run: |
           set -euo pipefail
-          notes_path=".github/release-notes/${GITHUB_REF_NAME}.md"
           {
             echo "MochiStar ${GITHUB_REF_NAME}"
             echo
-            if [ -f "$notes_path" ]; then
-              cat "$notes_path"
-              echo
-            fi
-            cat <<'EOF'
-          下載:
-          - `MochiStar-Windows.zip`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版
-          - `MochiStar-macOS.zip`: 關閉 MochiStar, 解壓縮後將 `MochiStar.app` 拖入「應用程式」並取代舊版
-          - `MochiStar-Linux.tar.gz`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版, archive 會保留執行權限
-
-          使用前請依需要安裝 FFmpeg 與 JavaScript Runtime，或在「設定」指定工具目錄
-
-          MochiStar 不會自動執行、解壓縮或覆蓋更新檔。設定、列隊與紀錄存放在系統 application data 目錄, 替換程式不會清除這些資料
-
-          macOS 版本使用 ad-hoc signing，沒有 Apple notarization。若系統阻擋啟動，請到「系統設定」>「隱私權與安全性」確認後選擇仍要打開
-          EOF
+            cat .github/release-notes.md
           } > release-body.md
 
       - name: Create GitHub Release

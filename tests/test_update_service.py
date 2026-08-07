@@ -48,11 +48,15 @@ def release_payload(tag: str, asset: dict | None = None, **values) -> dict:
     }
 
 
-def asset_payload(content: bytes, digest: str | None = None) -> dict:
-    """建立 Windows release asset 測試資料"""
+def asset_payload(
+    content: bytes,
+    digest: str | None = None,
+    name: str = "MochiStar-Windows-portable.zip",
+) -> dict:
+    """建立 release asset 測試資料"""
     return {
-        "name": "MochiStar-Windows.zip",
-        "browser_download_url": "https://github.test/MochiStar-Windows.zip",
+        "name": name,
+        "browser_download_url": f"https://github.test/{name}",
         "size": len(content),
         "digest": digest or f"sha256:{hashlib.sha256(content).hexdigest()}",
         "state": "uploaded",
@@ -61,8 +65,8 @@ def asset_payload(content: bytes, digest: str | None = None) -> dict:
 
 def make_release(content: bytes = b"update") -> UpdateRelease:
     asset = ReleaseAsset(
-        name="MochiStar-Windows.zip",
-        url="https://github.test/MochiStar-Windows.zip",
+        name="MochiStar-Windows-portable.zip",
+        url="https://github.test/MochiStar-Windows-portable.zip",
         size=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
     )
@@ -102,6 +106,7 @@ def test_platform_key_maps_supported_desktop_systems() -> None:
 
 def test_manual_update_instructions_are_platform_specific() -> None:
     assert "ZIP" in manual_update_instructions("windows")
+    assert "DMG" in manual_update_instructions("macos")
     assert "Applications" in manual_update_instructions("macos")
     assert "executable permission" in manual_update_instructions("linux")
     with pytest.raises(UpdateError): manual_update_instructions("haiku")
@@ -109,12 +114,36 @@ def test_manual_update_instructions_are_platform_specific() -> None:
 
 def test_manual_update_installer_only_opens_download_directory(tmp_path: Path) -> None:
     opened = []
-    update = DownloadedUpdate(make_release(), tmp_path / "downloads" / "MochiStar-Windows.zip")
+    update = DownloadedUpdate(make_release(), tmp_path / "downloads" / "MochiStar-Windows-portable.zip")
     installer = ManualUpdateInstaller(lambda path: opened.append(path) or True)
 
     assert installer.install(update)
     assert opened == [update.path.parent]
     assert not update.path.exists()
+
+
+@pytest.mark.parametrize(
+    "platform_key,asset_name",
+    [
+        ("windows", "MochiStar-Windows-portable.zip"),
+        ("macos", "MochiStar-macOS-installer.dmg"),
+        ("linux", "MochiStar-Linux.tar.gz"),
+    ],
+)
+def test_github_provider_uses_platform_release_asset_names(platform_key: str, asset_name: str) -> None:
+    content = b"verified update"
+    provider = GitHubReleaseProvider(
+        "owner/repo",
+        urlopen=lambda *_args, **_kwargs: FakeResponse(json.dumps([
+            release_payload("v1.1.0", asset_payload(content, name=asset_name)),
+        ]).encode()),
+    )
+
+    release = provider.check_latest(platform_key)
+
+    assert release is not None
+    assert release.asset is not None
+    assert release.asset.name == asset_name
 
 
 def test_github_provider_selects_highest_stable_non_draft_release() -> None:

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# 依 launcher 位置尋找 standalone application
+launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+exec "$launcher_dir/app/MochiStar" "$@"
