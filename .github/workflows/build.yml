@@ -1,5 +1,10 @@
 name: Build MochiStar
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && 'Test Build'
+      || format('Release MochiStar {0}', github.ref_name) }}
+      
 on:
   workflow_dispatch:
   push:
@@ -15,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Validate release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -46,7 +51,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure release repository
         shell: pwsh
@@ -58,7 +63,7 @@ jobs:
           )
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install Python and dependencies
         run: |
@@ -69,11 +74,6 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run pytest
-
-      - name: Build icons
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: uv run python tools/build_icons.py
 
       - name: Build Windows executable
         run: >
@@ -106,7 +106,7 @@ jobs:
           Compress-Archive -Path artifact\MochiStar -DestinationPath MochiStar-Windows.zip
 
       - name: Upload Windows build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MochiStar-Windows
           path: MochiStar-Windows.zip
@@ -118,13 +118,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure release repository
         run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install Python and dependencies
         run: |
@@ -135,11 +135,6 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run pytest
-
-      - name: Build icons
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: uv run python tools/build_icons.py
 
       - name: Build macOS app
         run: >
@@ -165,9 +160,9 @@ jobs:
       - name: Package macOS artifact
         run: |
           set -euo pipefail
-          app_path="$(find dist -maxdepth 3 -name 'MochiStar.app' -type d | head -n 1)"
-          if [ -z "$app_path" ]; then
-            echo "MochiStar.app was not found under dist"
+          app_path="dist/main.app"
+          if [ ! -d "$app_path" ]; then
+            echo "main.app was not found under dist"
             find dist -maxdepth 4 -print
             exit 1
           fi
@@ -181,7 +176,7 @@ jobs:
           ditto -c -k --sequesterRsrc artifact MochiStar-macOS.zip
 
       - name: Upload macOS build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MochiStar-macOS
           path: MochiStar-macOS.zip
@@ -193,16 +188,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure release repository
         run: printf '%s\n\nGITHUB_REPOSITORY = "%s"\n' '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" > src/release_config.py
 
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install --yes patchelf
+        run: sudo apt-get update && sudo apt-get install --yes libegl1 patchelf
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install Python and dependencies
         run: |
@@ -213,11 +208,6 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run pytest
-
-      - name: Build Linux icon
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: uv run python tools/build_icons.py
 
       - name: Build Linux executable
         run: >
@@ -248,7 +238,7 @@ jobs:
           tar -C artifact -czf MochiStar-Linux.tar.gz MochiStar
 
       - name: Upload Linux build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MochiStar-Linux
           path: MochiStar-Linux.tar.gz
@@ -264,10 +254,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 

@@ -1061,6 +1061,7 @@ def test_conversion_output_types_translate_to_traditional_chinese(app):
     panel = ConversionPanel()
     set_language("zh_TW")
     translate_widget_tree(panel)
+    panel.set_available_backends(("nvidia",))
 
     assert panel.output_type_combo.itemText(panel.output_type_combo.findData("video")) == "影片"
     assert panel.output_type_combo.itemText(panel.output_type_combo.findData("audio")) == "音訊"
@@ -1083,6 +1084,7 @@ def test_conversion_output_types_translate_to_traditional_chinese(app):
     assert panel.save_preset_button.text() == "另存預設"
     assert panel.files_list.toolTip() == "將本機檔案拖放到這裡"
     assert panel.option_labels["acceleration"].toolTip() == "優先使用支援的硬體轉碼加速"
+    assert panel.encoder_combo.itemText(panel.encoder_combo.findData("auto")) == "自動"
 
 
 def test_conversion_options_are_interactive_and_have_tooltips(app):

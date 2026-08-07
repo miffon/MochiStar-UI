@@ -2187,7 +2187,7 @@ class ConversionPanel(QWidget):
         """只顯示 service 已實際初始化成功的硬體品牌"""
         selected = self.encoder_combo.currentData()
         self.encoder_combo.clear()
-        self.encoder_combo.addItem("Auto", "auto")
+        self.encoder_combo.addItem(tr("Auto"), "auto")
         self.encoder_combo.addItem(tr("CPU (Software)"), "cpu")
         labels = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel"}
         for backend in ("nvidia", "amd", "intel"):

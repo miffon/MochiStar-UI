@@ -154,7 +154,7 @@ def test_github_provider_keeps_release_link_when_verified_asset_is_missing() -> 
 
 
 def test_github_provider_reports_configuration_payload_and_network_errors() -> None:
-    with pytest.raises(UpdateNotConfigured): GitHubReleaseProvider().check_latest("windows")
+    with pytest.raises(UpdateNotConfigured): GitHubReleaseProvider("").check_latest("windows")
     malformed = GitHubReleaseProvider("owner/repo", urlopen=lambda *_args, **_kwargs: FakeResponse(b"{"))
     with pytest.raises(UpdateError): malformed.check_latest("windows")
 
