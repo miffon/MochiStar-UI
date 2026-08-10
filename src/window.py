@@ -165,7 +165,7 @@ class CustomTitleBar(QFrame):
         self.content_layout.addWidget(self.controls)
 
     def set_custom_enabled(self, enabled: bool) -> None:
-        self.logo_label.setVisible(enabled)
+        self.logo_label.setVisible(True)
         self.controls.setVisible(enabled)
         self.setProperty("customTitleBar", enabled)
         self.style().unpolish(self)
@@ -674,10 +674,10 @@ class MainWindow(QMainWindow):
         self.analyze_panel.set_media(media)
         if media.thumbnail: self._load_thumbnail(media.thumbnail)
 
-    def _analysis_failed(self, message: str) -> None:
+    def _analysis_failed(self, _message: str) -> None:
         self.current_media = None
         self.analyze_panel.set_media(None)
-        QMessageBox.warning(self, tr("Analysis Failed"), tr(message))
+        QMessageBox.warning(self, tr("Analysis Failed"), tr("Analysis failed. Try again or check the Application Log."))
 
     def _analyze_subtitles(self, payload: dict[str, Any]) -> None:
         self.subtitle_panel.set_media(None)
@@ -690,9 +690,11 @@ class MainWindow(QMainWindow):
     def _subtitle_analysis_ready(self, media: MediaInfo) -> None:
         self.subtitle_panel.set_media(media)
 
-    def _subtitle_analysis_failed(self, message: str) -> None:
+    def _subtitle_analysis_failed(self, _message: str) -> None:
         self.subtitle_panel.set_media(None)
-        QMessageBox.warning(self, tr("Subtitle Analysis Failed"), tr(message))
+        QMessageBox.warning(
+            self, tr("Subtitle Analysis Failed"), tr("Analysis failed. Try again or check the Application Log.")
+        )
 
     def _load_thumbnail(self, url: str) -> None:
         self._abort_thumbnail()

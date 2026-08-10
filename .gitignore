@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 .pytest*
+system-test-results/
 
 # Virtual environments
 .venv

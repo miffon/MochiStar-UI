@@ -286,7 +286,7 @@ QComboBox:editable QLineEdit:focus {
 
 QComboBox[role="formatSelector"],
 QComboBox[role="formatSelector"] QAbstractItemView {
-    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-style: normal;
 }
 
 QComboBox QAbstractItemView {
@@ -497,6 +497,10 @@ QProgressBar::chunk {
 QCheckBox {
     color: {{colors.text_primary}};
     spacing: {{spacing.sm}};
+}
+
+QCheckBox[role="inlineOption"] {
+    padding-right: {{spacing.xs}};
 }
 
 QCheckBox::indicator, QTableView::indicator {

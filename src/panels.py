@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import Property, QAbstractTableModel, QEvent, QModelIndex, QObject, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import (
-    QColor, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent,
+    QColor, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFontDatabase,
     QPaintEvent, QPainter, QPen, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor, QWheelEvent,
 )
 from PySide6.QtWidgets import (
@@ -568,6 +568,9 @@ class AnalyzePanel(QWidget):
         # 進階 format 選擇
         self.video_format_combo = NoWheelComboBox()
         self.audio_format_combo = NoWheelComboBox()
+        fixed_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self.video_format_combo.setFont(fixed_font)
+        self.audio_format_combo.setFont(fixed_font)
         self.video_format_combo.addItem("Automatic\tUse download preset", None)
         self.audio_format_combo.addItem("Automatic\tUse download preset", None)
         _set_role("formatSelector", self.video_format_combo, self.audio_format_combo)
@@ -1803,6 +1806,8 @@ class ConversionPanel(QWidget):
         self.resolution_spin.setValue(1080)
         self.resolution_spin.setSuffix(" px")
         self.allow_upscale_checkbox = QCheckBox("Upscale")
+        self.allow_upscale_checkbox.setProperty("role", "inlineOption")
+        self.allow_upscale_checkbox.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self.allow_upscale_checkbox.setToolTip(
             "Allow output larger than the source; otherwise the selected resolution only scales down"
         )
@@ -3190,6 +3195,9 @@ class SettingsPanel(QWidget):
     def _build_layout(self) -> None:
         theme_group = QGroupBox("Appearance")
         theme_form = QFormLayout(theme_group)
+        theme_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for combo in (self.theme_combo, self.language_combo):
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         theme_form.addRow("Theme", self.theme_combo)
         theme_form.addRow("Language", self.language_combo)
         theme_form.addRow("", self.custom_title_bar_checkbox)

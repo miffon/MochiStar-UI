@@ -391,6 +391,8 @@ def test_settings_panel_manual_paths_are_locked_by_default(app):
     assert not panel.ffmpeg_directory_edit.isEnabled()
     assert not panel.js_directory_edit.isEnabled()
     assert not panel.reset_dependency_reminders_button.isEnabled()
+    assert panel.theme_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert panel.language_combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     panel.set_dependency_reminders_ignored(True)
     assert panel.reset_dependency_reminders_button.isEnabled()
     panel.manual_ffmpeg_checkbox.setChecked(True)
@@ -1261,6 +1263,7 @@ def test_conversion_panel_layout_alignment_and_initial_split(app):
             panel.allow_upscale_checkbox.mapTo(panel, panel.allow_upscale_checkbox.rect().center()).y()
             - panel.resolution_spin.mapTo(panel, panel.resolution_spin.rect().center()).y()
         ) <= 1
+        assert panel.allow_upscale_checkbox.width() >= panel.allow_upscale_checkbox.sizeHint().width()
         assert abs(
             panel.mute_audio_checkbox.mapTo(panel, panel.mute_audio_checkbox.rect().center()).y()
             - panel.audio_codec_combo.mapTo(panel, panel.audio_codec_combo.rect().center()).y()

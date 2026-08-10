@@ -20,6 +20,18 @@ Open the [Build MochiStar Actions page](https://github.com/miffon/MochiStar-UI/a
 
 You must be signed in to GitHub to download Actions artifacts
 
+### Independent macOS system test
+
+Maintainers can manually run the [macOS System Test workflow](https://github.com/miffon/MochiStar-UI/actions/workflows/macos-system-test.yml)
+
+The workflow checks packaging, networking, yt-dlp, external tools, and permissions on Apple Silicon and Intel runners. It provides these artifacts:
+
+- `macos-ui-arm64-*`: Per-page screenshots and an HTML gallery for both themes and languages
+- `macos-system-arm64-*`: Apple Silicon packaged application diagnostics
+- `macos-system-intel-*`: Intel packaged application diagnostics
+
+The UI keeps error feedback concise. Full tracebacks and yt-dlp diagnostics are stored in the system test artifact
+
 ## Updating MochiStar
 
 MochiStar checks for updates automatically and notifies you when a newer version is available:

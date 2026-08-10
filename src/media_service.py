@@ -185,7 +185,10 @@ class YtDlpService:
             text = remove_terminal_sequences(message)
             match = re.search(r"\bDownloading item (\d+) of (\d+)\b", text)
             if match and progress_cb: progress_cb(int(match.group(1)), int(match.group(2)))
-            logging.getLogger("yt_dlp").info(text)
+            logger = logging.getLogger("yt_dlp")
+            if text.startswith("ERROR:"): logger.error(text)
+            elif text.startswith("WARNING:"): logger.warning(text)
+            else: logger.info(text)
 
         options = {
             "quiet": True,

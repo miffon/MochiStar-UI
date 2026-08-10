@@ -376,6 +376,7 @@ _ZH_TW = {
     "Modern Dark": "星夜",
     "Analysis Failed": "分析失敗",
     "Subtitle Analysis Failed": "字幕分析失敗",
+    "Analysis failed. Try again or check the Application Log.": "分析失敗, 請再試一次或查看應用程式紀錄",
     "Invalid Cookie File": "無效的 Cookie 檔案",
     "Choose an existing Netscape cookies.txt file": "請選擇現有的 Netscape cookies.txt 檔案",
     "No Playlist Items": "未選擇播放清單項目",

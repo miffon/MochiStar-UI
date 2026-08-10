@@ -401,7 +401,7 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     frameless_flag = window_module.Qt.WindowType.FramelessWindowHint
     assert not window.windowFlags() & frameless_flag
     assert window.top_bar.controls.isHidden()
-    assert window.top_bar.logo_label.isHidden()
+    assert not window.top_bar.logo_label.isHidden()
     assert not window.top_bar.logo_label.pixmap().isNull()
     assert window.top_bar.findChild(window_module.QLabel, "brandTitle").text() == "MochiStar"
     window.settings_panel.custom_title_bar_checkbox.setChecked(True)

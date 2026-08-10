@@ -87,6 +87,11 @@ def main() -> int:
     if os.environ.get("MOCHISTAR_UPDATE_SMOKE_TEST") == "1":
         app = QCoreApplication(sys.argv)
         return _run_update_smoke_test()
+    system_test = os.environ.get("MOCHISTAR_SYSTEM_TEST", "")
+    if system_test:
+        app = QCoreApplication(sys.argv)
+        from system_probe import run_system_probe
+        return run_system_probe(system_test, os.environ.get("MOCHISTAR_SYSTEM_TEST_URL", ""))
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("MochiStar")
     app.setWindowIcon(QIcon(str(_application_icon_path()))) # 設定工作列與視窗 icon

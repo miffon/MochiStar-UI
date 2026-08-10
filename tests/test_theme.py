@@ -63,6 +63,7 @@ def test_starlit_night_resolves_tokens_and_contains_core_styles():
     assert "QDoubleSpinBox::up-arrow" in stylesheet
     assert "QSplitter::handle:horizontal" in stylesheet
     assert 'QListWidget[dragActive="true"]' in stylesheet
+    assert 'QCheckBox[role="inlineOption"]' in stylesheet
     assert re.search(r"QSpinBox::up-button, QDoubleSpinBox::up-button,[^{]*\{[^}]*width:\s*18px", stylesheet, re.DOTALL)
     assert re.search(r"QComboBox\s*\{[^}]*padding-left:\s*12px", stylesheet, re.DOTALL)
     assert re.search(r"QComboBox:editable\s*\{[^}]*padding-left:\s*8px", stylesheet, re.DOTALL)

@@ -1,0 +1,291 @@
+name: macOS System Test
+
+run-name: macOS system test
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_packaged:
+        description: Build and test packaged DMG
+        required: true
+        type: boolean
+        default: false
+      media_url:
+        description: External media URL used by yt-dlp analysis
+        required: true
+        type: string
+        default: "https://www.nicovideo.jp/watch/sm29822304"
+      include_raw_diagnostics:
+        description: Upload raw screenshots, JSON, and logs for difficult debugging
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  media-url-preflight:
+    name: Media URL preflight
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Python and dependencies
+        id: dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Validate external media URL
+        shell: bash
+        env:
+          MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
+        run: |
+          mkdir -p system-test-results/url-preflight
+          uv run python system_tests/macos/preflight_media_url.py \
+            --url "$MOCHISTAR_TEST_MEDIA_URL" --output system-test-results/url-preflight
+
+      - name: Build URL preflight bundle
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          uv run python system_tests/macos/build_artifact_bundle.py \
+            --source system-test-results/url-preflight \
+            --output system-test-results/final-url-preflight \
+            --title "MochiStar media URL preflight"
+
+      - name: Upload URL preflight diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-url-preflight
+          path: system-test-results/final-url-preflight
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload raw URL preflight diagnostics
+        if: ${{ always() && inputs.include_raw_diagnostics }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-debug-url-preflight
+          path: system-test-results/url-preflight
+          if-no-files-found: warn
+          retention-days: 14
+
+  script-system:
+    name: macOS 15 ${{ matrix.architecture }} script system test
+    needs: media-url-preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: intel
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure test release repository
+        shell: bash
+        run: |
+          printf '%s\n\nGITHUB_REPOSITORY = "%s"\nIS_TEST_BUILD = True\n' \
+            '"""保存 system test 注入的 Release 設定"""' "$GITHUB_REPOSITORY" \
+            > src/release_config.py
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Python and dependencies
+        id: dependencies
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Run platform checks
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        env:
+          MOCHISTAR_RESULT_DIR: system-test-results/platform
+        run: |
+          set -o pipefail
+          mkdir -p "$MOCHISTAR_RESULT_DIR"
+          uv run python system_tests/macos/run_platform_checks.py \
+            2>&1 | tee "$MOCHISTAR_RESULT_DIR/runner.log"
+
+      - name: Run source application probes
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        env:
+          MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
+        run: |
+          mkdir -p system-test-results/probes
+          uv run python system_tests/macos/run_source_probes.py \
+            --media-url "$MOCHISTAR_TEST_MEDIA_URL" --output system-test-results/probes
+
+      - name: Capture UI and run live analysis
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p system-test-results/ui
+          QT_SCALE_FACTOR=1 uv run python system_tests/macos/capture_ui.py \
+            --output system-test-results/ui 2>&1 | tee system-test-results/ui/runner.log
+
+      - name: Add script result summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## macOS ${{ matrix.architecture }} script system test"
+            echo
+            echo "Runner: ${{ matrix.runner }}"
+            if [ -f system-test-results/probes/update.json ] && \
+               [ -f system-test-results/probes/media-local.json ] && \
+               [ -f system-test-results/probes/media-external.json ]; then
+              echo "Source application probes produced diagnostic reports"
+            else
+              echo "One or more source probe reports are missing"
+            fi
+            if [ -f system-test-results/ui/report.json ]; then
+              echo "Generated page, dropdown, dialog, and live analysis screenshots"
+            else
+              echo "UI capture stopped before report.json was created, inspect runner.log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build script system bundle
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          uv run python system_tests/macos/build_artifact_bundle.py \
+            --source system-test-results \
+            --output system-test-results/final-script-${{ matrix.architecture }} \
+            --title "MochiStar macOS ${{ matrix.architecture }} script system test"
+
+      - name: Upload script system diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-script-${{ matrix.architecture }}
+          path: system-test-results/final-script-${{ matrix.architecture }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload raw script diagnostics
+        if: ${{ always() && inputs.include_raw_diagnostics }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-debug-script-${{ matrix.architecture }}
+          path: |
+            system-test-results
+            !system-test-results/final-*/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  packaged-system:
+    name: macOS 15 ${{ matrix.architecture }} packaged app
+    if: ${{ inputs.run_packaged }}
+    needs: script-system
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-15
+          - architecture: intel
+            runner: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure test release repository
+        shell: bash
+        run: |
+          printf '%s\n\nGITHUB_REPOSITORY = "%s"\nIS_TEST_BUILD = True\n' \
+            '"""保存 packaging workflow 注入的 Release 設定"""' "$GITHUB_REPOSITORY" \
+            > src/release_config.py
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Python and dependencies
+        id: dependencies
+        shell: bash
+        run: |
+          uv python install
+          uv sync --locked
+
+      - name: Build release-equivalent macOS app
+        shell: bash
+        run: bash .github/scripts/build-macos-app.sh MochiStar-system-test.dmg
+
+      - name: Run packaged application probes
+        shell: bash
+        env:
+          MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
+        run: |
+          mkdir -p system-test-results/packaged
+          bash .github/scripts/run-macos-packaged-system.sh \
+            MochiStar-system-test.dmg system-test-results/packaged "$MOCHISTAR_TEST_MEDIA_URL"
+
+      - name: Add packaged result summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## macOS ${{ matrix.architecture }} packaged application"
+            echo
+            echo "Runner: ${{ matrix.runner }}"
+            echo "Architecture: $(uname -m)"
+            if [ -f system-test-results/packaged/update.json ] && \
+               [ -f system-test-results/packaged/media-local.json ] && \
+               [ -f system-test-results/packaged/media-external.json ]; then
+              echo "Packaged application probes produced diagnostic reports"
+            else
+              echo "One or more packaged probe reports are missing, inspect build and probe logs"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build packaged system bundle
+        if: ${{ always() && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          uv run python system_tests/macos/build_artifact_bundle.py \
+            --source system-test-results \
+            --output system-test-results/final-package-${{ matrix.architecture }} \
+            --title "MochiStar macOS ${{ matrix.architecture }} packaged system test"
+
+      - name: Upload packaged diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-package-${{ matrix.architecture }}
+          path: system-test-results/final-package-${{ matrix.architecture }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload raw packaged diagnostics
+        if: ${{ always() && inputs.include_raw_diagnostics }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-debug-package-${{ matrix.architecture }}
+          path: |
+            system-test-results
+            !system-test-results/final-*/**
+          if-no-files-found: warn
+          retention-days: 14

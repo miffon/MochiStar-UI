@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import subprocess
 import threading
@@ -210,6 +211,21 @@ def test_yt_dlp_logger_removes_terminal_codes_and_duplicate_levels() -> None:
         "WARNING: challenge solver unavailable",
         "ERROR: format unavailable",
     ]
+
+
+def test_analyze_writes_yt_dlp_error_to_error_log_without_expanding_ui_error(caplog) -> None:
+    class FailedYdl(FakeYdl):
+        def extract_info(self, _url: str, download: bool = False) -> dict:
+            self.options["logger"].error("remote challenge solver failed")
+            return {}
+
+    service = YtDlpService(lambda options: FailedYdl(options, {}, []), which=lambda _name: None)
+
+    with caplog.at_level(logging.ERROR, logger="yt_dlp"):
+        with pytest.raises(ValueError, match="yt-dlp returned no media information"):
+            service.analyze("https://example.test/video")
+
+    assert "ERROR: remote challenge solver failed" in caplog.text
 
 
 def test_execute_download_reports_progress_and_final_path(tmp_path: Path) -> None:
