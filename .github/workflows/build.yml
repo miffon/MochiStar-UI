@@ -354,10 +354,17 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+          skip-decompress: true
 
       - name: Collect release files
         run: |
           set -euo pipefail
+          echo "Downloaded release assets:"
+          find release-assets -maxdepth 2 -type f -print | sort
+          test -f release-assets/MochiStar-Windows-portable.zip
+          test -f release-assets/MochiStar-macOS-installer.dmg
+          test -f release-assets/MochiStar-Linux.tar.gz
+          unzip -t release-assets/MochiStar-Windows-portable.zip
           mkdir -p release-files
           cp release-assets/MochiStar-Windows-portable.zip release-files/
           cp release-assets/MochiStar-macOS-installer.dmg release-files/
