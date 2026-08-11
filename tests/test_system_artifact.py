@@ -18,6 +18,7 @@ def test_build_bundle_flattens_ui_and_merges_text_diagnostics(tmp_path: Path) ->
     )
     (source / "probes").mkdir()
     (source / "probes" / "runner.log").write_text("probe completed", encoding="utf-8")
+    (source / "probes" / "MochiStar-test.ips").write_text("native crash report", encoding="utf-8")
     output = source / "final-script-arm64"
 
     build_bundle(source, output, "macOS ARM64")
@@ -26,4 +27,5 @@ def test_build_bundle_flattens_ui_and_merges_text_diagnostics(tmp_path: Path) ->
     assert "`ui/report.json`: passed" in (output / "README.md").read_text(encoding="utf-8")
     report_log = (output / "report.log").read_text(encoding="utf-8")
     assert "probe completed" in report_log
+    assert "native crash report" in report_log
     assert '"captures"' not in report_log

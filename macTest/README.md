@@ -10,6 +10,8 @@
 
 測試由 `workflow_dispatch` 手動執行, 預設只跑 ARM64 和 Intel script tests
 勾選 `run_packaged` 才會在 script tests 通過後建立並測試兩個 architecture 的 DMG
+packaged probes 會從含空白但使用 ASCII app 名稱的路徑啟動, 避免 Nuitka bootstrap 在進入 Python 前因 Unicode bundle path 中止
+Unicode path 與 subprocess 行為仍由 `run_platform_checks.py` 獨立覆蓋
 
 `media_url` 有預設測試連結, 每次執行也可以注入其他 yt-dlp 支援的 URL
 URL preflight 會將錯誤分成 `url_content`, `permission`, `network` 或 `unknown`, 失敗時不啟動後續 macOS jobs

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from main import _acquire_instance_lock, _initialize_language, _run_update_smoke_test
+from main import _acquire_instance_lock, _initialize_language, _run_update_smoke_test, _write_probe_stage
 from storage import AppStorage, Settings
 
 
@@ -59,3 +59,29 @@ def test_update_smoke_test_checks_current_platform() -> None:
 
     assert _run_update_smoke_test(provider) == 0
     assert len(provider.platforms) == 1
+
+
+def test_probe_stage_writes_external_trace(tmp_path: Path, monkeypatch) -> None:
+    trace_path = tmp_path / "probe-trace.txt"
+    monkeypatch.setenv("MOCHISTAR_PROBE_TRACE_FILE", str(trace_path))
+
+    _write_probe_stage("update:before-qapplication")
+    _write_probe_stage("update:after-qapplication")
+
+    trace = trace_path.read_text(encoding="utf-8")
+    assert "stage=update:before-qapplication" in trace
+    assert "stage=update:after-qapplication" in trace
+
+
+def test_packaged_smoke_mode_creates_qapplication(app, monkeypatch) -> None:
+    import main as main_module
+
+    created = []
+    monkeypatch.setenv("MOCHISTAR_UPDATE_SMOKE_TEST", "1")
+    monkeypatch.delenv("MOCHISTAR_SYSTEM_TEST", raising=False)
+    monkeypatch.setattr(main_module, "_configure_platform_identity", lambda: None)
+    monkeypatch.setattr(main_module, "QApplication", lambda arguments: created.append(arguments) or object())
+    monkeypatch.setattr(main_module, "_run_update_smoke_test", lambda: 0)
+
+    assert main_module.main() == 0
+    assert created == [main_module.sys.argv]

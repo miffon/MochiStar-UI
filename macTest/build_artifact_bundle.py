@@ -43,7 +43,7 @@ def build_bundle(source: Path, output: Path, title: str) -> None:
     ui_dir.mkdir(exist_ok=True)
     text_paths = sorted(
         path for path in source.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".json", ".log", ".txt", ".md"}
+        if path.is_file() and path.suffix.lower() in {".ips", ".json", ".log", ".txt", ".md"}
         and not path.is_relative_to(output)
     )
     image_paths = sorted(

@@ -77,6 +77,17 @@ def _run_update_smoke_test(provider: QtGitHubReleaseProvider | None = None) -> i
     return 0
 
 
+def _write_probe_stage(stage: str) -> None:
+    """將 packaged probe 啟動階段寫入外部 trace"""
+    trace_path = os.environ.get("MOCHISTAR_PROBE_TRACE_FILE", "")
+    if not trace_path: return
+    try:
+        with Path(trace_path).open("a", encoding="utf-8") as trace_file:
+            trace_file.write(f"pid={os.getpid()} stage={stage}\n")
+    except OSError:
+        pass
+
+
 def main() -> int:
     """建立 application 並啟動 Qt event loop"""
     configure_macos_executable_path(os.environ)
@@ -84,13 +95,16 @@ def main() -> int:
     QCoreApplication.setApplicationName("MochiStar")
     QCoreApplication.setApplicationVersion(DISPLAY_VERSION)
     _configure_platform_identity()
-    if os.environ.get("MOCHISTAR_UPDATE_SMOKE_TEST") == "1":
-        app = QCoreApplication(sys.argv)
-        return _run_update_smoke_test()
+    update_smoke_test = os.environ.get("MOCHISTAR_UPDATE_SMOKE_TEST") == "1"
     system_test = os.environ.get("MOCHISTAR_SYSTEM_TEST", "")
-    if system_test:
-        app = QCoreApplication(sys.argv)
+    if update_smoke_test or system_test:
+        probe_name = "update-smoke" if update_smoke_test else system_test
+        _write_probe_stage(f"{probe_name}:before-qapplication")
+        app = QApplication(sys.argv)
+        _write_probe_stage(f"{probe_name}:after-qapplication")
+        if update_smoke_test: return _run_update_smoke_test()
         from system_probe import run_system_probe
+        _write_probe_stage(f"{probe_name}:before-system-probe")
         return run_system_probe(system_test, os.environ.get("MOCHISTAR_SYSTEM_TEST_URL", ""))
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("MochiStar")
