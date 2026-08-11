@@ -2,7 +2,7 @@
 
 from release_config import IS_TEST_BUILD
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def display_version(version: str = __version__, is_test_build: bool = IS_TEST_BUILD) -> str:

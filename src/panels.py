@@ -3332,16 +3332,16 @@ class SettingsPanel(QWidget):
         """依目前略過狀態更新提醒重設按鈕"""
         self.reset_dependency_reminders_button.setEnabled(ignored)
 
-    def set_update_info(self, version: str, status_source: str, **values: Any) -> None:
+    def set_update_info(self, current_version: str, status_source: str, **values: Any) -> None:
         """更新目前版本與更新服務狀態"""
-        self.current_version_label.setText(tr("Current Version: {version}", version=version))
+        self.current_version_label.setText(tr("Current Version: {version}", version=current_version))
         self._update_status_source = status_source
         self._update_status_values = values
         self.update_status_label.setText(tr(status_source, **values))
 
-    def retranslate_update_info(self, version: str) -> None:
+    def retranslate_update_info(self, current_version: str) -> None:
         """切換語言後重新產生動態更新文字"""
-        self.set_update_info(version, self._update_status_source, **self._update_status_values)
+        self.set_update_info(current_version, self._update_status_source, **self._update_status_values)
 
     def tool_payload(self) -> dict[str, Any]:
         """建立工具路徑設定 payload"""

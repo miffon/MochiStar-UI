@@ -48,6 +48,18 @@ from theme import load_theme_stylesheet, theme_color
 TEST_PATH = Path("test-data")
 
 
+def test_settings_update_info_accepts_release_version_format_value(app) -> None:
+    panel = SettingsPanel()
+
+    panel.set_update_info("1.0.0-test", "Update available: {version}", version="1.0.0")
+
+    assert panel.current_version_label.text() == "Current Version: 1.0.0-test"
+    assert panel.update_status_label.text() == "Update available: 1.0.0"
+    panel.retranslate_update_info("1.0.0-test")
+    assert panel.update_status_label.text() == "Update available: 1.0.0"
+    panel.close()
+
+
 @pytest.fixture(autouse=True)
 def english_ui():
     set_language("en")
