@@ -680,6 +680,29 @@ def test_combo_boxes_ignore_mouse_wheel(app):
     assert combo.currentIndex() == 0
 
 
+def test_combo_popup_shows_all_items_without_covering_control(app):
+    combo = NoWheelComboBox()
+    combo.addItems(["First", "Second", "Third"])
+    combo.resize(240, 30)
+    combo.move(100, 100)
+    combo.show()
+    combo.showPopup()
+    app.processEvents()
+    app.processEvents()
+    popup = combo.view().window()
+    combo_rect = combo.geometry()
+    popup_rect = popup.geometry()
+    try:
+        expected_height = sum(combo.view().sizeHintForRow(row) for row in range(combo.count()))
+        assert expected_height <= popup.height() <= expected_height + 24
+        assert not combo.view().verticalScrollBar().isVisible()
+        intersection = popup_rect.intersected(combo_rect)
+        assert not intersection.isValid() or intersection.height() <= 1
+    finally:
+        combo.hidePopup()
+        combo.close()
+
+
 def test_editable_combo_applies_native_font_alignment_compensation(app):
     previous_stylesheet = app.styleSheet()
     app.setStyleSheet(load_theme_stylesheet())

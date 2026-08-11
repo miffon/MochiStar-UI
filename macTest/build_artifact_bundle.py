@@ -20,6 +20,12 @@ def _display_json(path: Path) -> tuple[str, dict | None]:
     display = data
     if path.name == "report.json" and isinstance(data, dict):
         display = {key: value for key, value in data.items() if key not in {"captures", "dropdowns", "dialogs"}}
+        display["dropdowns"] = [
+            {key: item.get(key) for key in (
+                "name", "source", "path", "popup_width", "popup_height", "overlap_height", "overlaps_combo",
+            )}
+            for item in data.get("dropdowns", []) if isinstance(item, dict)
+        ]
     return json.dumps(display, ensure_ascii=False, indent=2), data if isinstance(data, dict) else None
 
 
@@ -76,7 +82,7 @@ def build_bundle(source: Path, output: Path, title: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build one readable macOS system-test artifact bundle")
+    parser = argparse.ArgumentParser(description="Build one readable macTest artifact bundle")
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title", required=True)

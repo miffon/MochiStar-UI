@@ -83,8 +83,12 @@ def test_starlit_night_resolves_tokens_and_contains_core_styles():
     assert re.search(
         r"QComboBox\s*\{[^}]*padding-top:\s*-1px[^}]*padding-bottom:\s*1px", stylesheet, re.DOTALL
     )
+    assert re.search(r"QComboBox\s*\{[^}]*combobox-popup:\s*0", stylesheet, re.DOTALL)
     assert re.search(r"QComboBox::drop-down\s*\{[^}]*subcontrol-origin:\s*border[^}]*width:\s*18px", stylesheet, re.DOTALL)
     assert re.search(r"QComboBox QAbstractItemView::item\s*\{[^}]*padding:\s*0 7px", stylesheet, re.DOTALL)
+    assert re.search(
+        r"QComboBox QAbstractItemView::item:hover\s*\{[^}]*color:[^}]*background-color:", stylesheet, re.DOTALL,
+    )
     assert re.search(
         r'QTableView QComboBox\[role="tableCell"\]\s*\{[^}]*padding-top:\s*0[^}]*padding-bottom:\s*0',
         stylesheet, re.DOTALL,

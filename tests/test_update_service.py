@@ -223,6 +223,15 @@ def test_qt_github_provider_reads_and_parses_release_payload() -> None:
     assert release.asset is not None
 
 
+def test_qt_github_provider_adds_optional_bearer_token() -> None:
+    class Client:
+        def read(self, _url, headers, _timeout, _max_size):
+            assert headers["Authorization"] == "Bearer workflow-token"
+            return b"[]"
+
+    assert QtGitHubReleaseProvider("owner/repo", Client(), token="workflow-token").check_latest("macos") is None
+
+
 def test_qt_github_provider_translates_network_errors() -> None:
     class Client:
         def read(self, *_args, **_kwargs):

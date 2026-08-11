@@ -40,7 +40,7 @@ def start_local_media_server(port: int = 0) -> tuple[ThreadingHTTPServer, thread
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Serve the macOS system test media fixture")
+    parser = argparse.ArgumentParser(description="Serve the macTest media fixture")
     parser.add_argument("--port", type=int, default=38473)
     arguments = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", arguments.port), _MediaHandler)

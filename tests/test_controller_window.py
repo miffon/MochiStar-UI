@@ -17,7 +17,7 @@ from models import (
     CookieConfig, ConversionOptions, ConversionPreset, DownloadOptions, MediaInfo,
     ReplacementOptions, TaskRecord, TaskStatus,
 )
-from panels import BottomStatusBar
+from panels import BottomStatusBar, RoundedProgressBar
 from storage import AppStorage, Settings
 
 TEST_PATH = Path("test-data")
@@ -44,6 +44,26 @@ def test_rounded_rect_region_uses_scanline_circle() -> None:
     assert region.boundingRect() == window_module.QRect(0, 0, 100, 80)
     assert window_module.WINDOW_CORNER_RADIUS == 8
     assert window_module.WINDOW_BORDER_RADIUS == 6
+
+
+def test_update_progress_dialog_reuses_rounded_progress_bar(app) -> None:
+    import window as window_module
+
+    parent = QWidget()
+    dialog = window_module.create_update_progress_dialog(parent)
+    window_module.update_progress_dialog(dialog, 42, 100)
+
+    progress_bar = dialog.findChild(RoundedProgressBar)
+    assert progress_bar is not None
+    assert not progress_bar.isTextVisible()
+    assert dialog.value() == 42
+    assert dialog.labelText() == f"{window_module.tr('Downloading update file...')} 42%"
+
+    window_module.update_progress_dialog(dialog, 1, 0)
+    assert dialog.minimum() == dialog.maximum() == 0
+    assert dialog.labelText() == window_module.tr("Downloading update file...")
+    dialog.close()
+    parent.close()
 
 
 class FakeFFmpegService:

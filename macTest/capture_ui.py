@@ -11,13 +11,15 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer, qVersion
+from PySide6.QtCore import QCoreApplication, QEventLoop, QPoint, QRect, QTimer, qVersion
+from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QInputDialog, QLabel, QMessageBox, QProgressDialog,
+    QApplication, QCheckBox, QComboBox, QInputDialog, QLabel, QMessageBox,
     QPushButton, QScrollArea, QWidget,
 )
 
@@ -28,7 +30,7 @@ from local_media_server import start_local_media_server
 from models import DownloadOptions, FormatInfo, MediaInfo, SubtitleTrack, TaskKind, TaskRecord, TaskStatus
 from storage import AppStorage, Settings
 from theme import apply_theme
-from window import MainWindow
+from window import MainWindow, create_update_progress_dialog, update_progress_dialog
 
 
 PANELS = (
@@ -226,22 +228,56 @@ def _capture(
     return result
 
 
-def _capture_dropdown(window: MainWindow, combo: QComboBox, output_dir: Path, name: str) -> dict[str, Any]:
-    """擷取實際 QComboBox popup window"""
+def _capture_dropdown(
+    window: MainWindow, combo: QComboBox, output_dir: Path, name: str, source: str,
+) -> dict[str, Any]:
+    """擷取含原頁面位置與 hover 狀態的 QComboBox popup"""
+    parent = combo.parentWidget()
+    while parent and not isinstance(parent, QScrollArea): parent = parent.parentWidget()
+    if isinstance(parent, QScrollArea):
+        parent.ensureWidgetVisible(combo, 24, max(120, parent.viewport().height() // 3))
+        QApplication.processEvents()
     combo.showPopup()
     QApplication.processEvents()
-    popup = combo.view().window()
-    image = popup.grab().toImage()
+    QApplication.processEvents()
+    view = combo.view()
+    hover_index = view.model().index(min(1, combo.count() - 1), 0)
+    QTest.mouseMove(view.viewport(), view.visualRect(hover_index).center())
+    QApplication.processEvents()
+    popup = view.window()
+    popup_image = popup.grab().toImage()
+    window_image = window.grab().toImage()
+    window_origin = window.mapToGlobal(QPoint())
+    popup_origin = popup.mapToGlobal(QPoint())
+    offset = popup_origin - window_origin
+    left, top = min(0, offset.x()), min(0, offset.y())
+    right = max(window_image.width(), offset.x() + popup_image.width())
+    bottom = max(window_image.height(), offset.y() + popup_image.height())
+    image = QImage(right - left, bottom - top, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#ffffff"))
+    painter = QPainter(image)
+    painter.drawImage(-left, -top, window_image)
+    painter.drawImage(offset.x() - left, offset.y() - top, popup_image)
+    painter.end()
+    combo_rect = QRect(combo.mapToGlobal(QPoint()), combo.size())
+    popup_rect = QRect(popup_origin, popup.size())
+    intersection = popup_rect.intersected(combo_rect)
+    overlap_height = intersection.height() if intersection.isValid() else 0
     path = output_dir / "dropdowns" / f"{name}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     saved = image.save(str(path), "PNG")
     combo.hidePopup()
     QApplication.processEvents()
     result = {
-        "name": name, "path": path.relative_to(output_dir).as_posix(),
+        "name": name, "source": source, "path": path.relative_to(output_dir).as_posix(),
         "width": image.width(), "height": image.height(), "saved": saved, "nonblank": _image_is_nonblank(image),
+        "popup_width": popup.width(), "popup_height": popup.height(),
+        "combo_geometry": [combo_rect.x(), combo_rect.y(), combo_rect.width(), combo_rect.height()],
+        "popup_geometry": [popup_rect.x(), popup_rect.y(), popup_rect.width(), popup_rect.height()],
+        "overlap_height": overlap_height, "overlaps_combo": overlap_height > 1,
     }
-    if not saved or not result["nonblank"]: raise RuntimeError(f"Invalid dropdown screenshot: {result}")
+    if not saved or not result["nonblank"] or result["overlaps_combo"]:
+        raise RuntimeError(f"Invalid dropdown screenshot: {result}")
     return result
 
 
@@ -295,9 +331,8 @@ def _dialog_fixtures(parent: QWidget) -> list[tuple[str, QWidget]]:
     preset.setWindowTitle("儲存轉檔預設")
     preset.setLabelText("預設名稱")
     preset.setTextValue("macOS 測試預設")
-    progress = QProgressDialog("正在下載更新檔...", "取消", 0, 100, parent)
-    progress.setWindowTitle("應用程式更新")
-    progress.setValue(42)
+    progress = create_update_progress_dialog(parent)
+    update_progress_dialog(progress, 42, 100)
     missing = lambda key, name, minimum="": ToolStatus(key, name, key, minimum_version=minimum)
     dependency_report = DependencyReport(
         missing("ffmpeg", "FFmpeg"), missing("ffprobe", "FFprobe"), (missing("deno", "Deno", "2.3.0"),),
@@ -353,20 +388,30 @@ def _capture_special_states(window: MainWindow, output_dir: Path) -> tuple[list[
     window.panel_stack.setCurrentWidget(window.settings_panel)
     window.settings_panel.settings_scroll.verticalScrollBar().setValue(0)
     QApplication.processEvents()
-    dropdowns = [_capture_dropdown(window, window.settings_panel.theme_combo, output_dir, "standard")]
+    dropdowns = [_capture_dropdown(
+        window, window.settings_panel.theme_combo, output_dir, "standard", "Settings > Appearance > Theme",
+    )]
 
     window.panel_stack.setCurrentWidget(window.analyze_panel)
     window.analyze_panel.cookie_browser_combo.setEnabled(True)
     QApplication.processEvents()
-    dropdowns.append(_capture_dropdown(window, window.analyze_panel.cookie_browser_combo, output_dir, "editable"))
+    dropdowns.append(_capture_dropdown(
+        window, window.analyze_panel.cookie_browser_combo, output_dir, "editable",
+        "Media > Output and Cookies > Browser",
+    ))
     window.analyze_panel.video_format_combo.setEnabled(True)
-    dropdowns.append(_capture_dropdown(window, window.analyze_panel.video_format_combo, output_dir, "fixed-font-format"))
+    dropdowns.append(_capture_dropdown(
+        window, window.analyze_panel.video_format_combo, output_dir, "fixed-font-format",
+        "Media > Advanced Formats > Video Format",
+    ))
 
     window.panel_stack.setCurrentWidget(window.subtitle_panel)
     QApplication.processEvents()
     table_combo = window.subtitle_panel.subtitle_table.cellWidget(0, 5)
     if not isinstance(table_combo, QComboBox): raise RuntimeError("Subtitle table combo fixture is missing")
-    dropdowns.append(_capture_dropdown(window, table_combo, output_dir, "table-cell"))
+    dropdowns.append(_capture_dropdown(
+        window, table_combo, output_dir, "table-cell", "Subtitle > Format table cell",
+    ))
 
     dialogs = [_capture_dialog(dialog, output_dir, name) for name, dialog in _dialog_fixtures(window)]
     return dropdowns, dialogs, {name: len(combos) for name, combos in sorted(combo_types.items())}

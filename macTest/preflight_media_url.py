@@ -8,7 +8,7 @@ from pathlib import Path
 from probe_runner import ProbeFailure, run_probe
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _append_summary(lines: list[str]) -> None:
@@ -19,7 +19,7 @@ def _append_summary(lines: list[str]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate the external media URL before macOS system tests")
+    parser = argparse.ArgumentParser(description="Validate the external media URL before macTest")
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()

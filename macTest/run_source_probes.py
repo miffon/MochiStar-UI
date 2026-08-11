@@ -8,7 +8,7 @@ from local_media_server import start_local_media_server
 from probe_runner import ProbeFailure, run_probe
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:

@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from PySide6.QtCore import Property, QAbstractTableModel, QEvent, QModelIndex, QObject, QSize, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import (
+    Property, QAbstractTableModel, QEvent, QModelIndex, QObject, QPoint, QRect, QSize, QSortFilterProxyModel,
+    QTimer, Qt, Signal,
+)
 from PySide6.QtGui import (
     QColor, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFontDatabase,
     QPaintEvent, QPainter, QPen, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor, QWheelEvent,
@@ -57,6 +60,52 @@ class NoWheelComboBox(QComboBox):
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         event.ignore()
+
+    def showPopup(self) -> None:
+        """顯示完整 popup, 並避開 ComboBox 本身"""
+        super().showPopup()
+        QTimer.singleShot(0, self._fit_popup)
+
+    def _fit_popup(self) -> None:
+        """依 item 數量與螢幕空間調整 popup geometry"""
+        view = self.view()
+        popup = view.window()
+        if not popup.isVisible() or self.count() <= 0: return
+        visible_items = min(self.count(), max(1, self.maxVisibleItems()))
+        fallback_height = view.fontMetrics().height() + 8
+        row_heights = [view.sizeHintForRow(row) for row in range(visible_items)]
+        content_height = sum(height if height > 0 else fallback_height for height in row_heights)
+        margins = view.contentsMargins()
+        frame = max(0, view.frameWidth()) * 2
+        view_chrome = frame + margins.top() + margins.bottom()
+        popup_chrome = max(0, popup.height() - view.height())
+        desired_height = content_height + view_chrome + popup_chrome
+        content_width = max(0, view.sizeHintForColumn(0)) + frame + view.verticalScrollBar().sizeHint().width()
+        screen = self.screen().availableGeometry()
+        desired_width = min(max(self.width(), content_width), max(1, screen.width() - 16))
+        combo_rect = QRect(self.mapToGlobal(QPoint()), self.size())
+        below_space = screen.bottom() - combo_rect.bottom()
+        above_space = combo_rect.top() - screen.top()
+        if below_space >= desired_height:
+            place_below = True
+            popup_y = combo_rect.bottom() + 2
+        elif above_space >= desired_height:
+            place_below = False
+            popup_y = combo_rect.top() - desired_height
+        else:
+            place_below = below_space >= above_space
+            desired_height = max(fallback_height + view_chrome, below_space if place_below else above_space)
+            popup_y = combo_rect.bottom() + 2 if place_below else screen.top()
+        view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff if visible_items == self.count()
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        popup_x = min(max(combo_rect.left(), screen.left() + 8), screen.right() - desired_width - 7)
+        popup.setGeometry(popup_x, popup_y, desired_width, desired_height)
+        actual_rect = QRect(popup.mapToGlobal(QPoint()), popup.size())
+        if actual_rect.intersects(combo_rect):
+            target_y = combo_rect.bottom() + 2 if place_below else combo_rect.top() - actual_rect.height() - 1
+            popup.move(popup.x(), popup.y() + target_y - actual_rect.top())
 
 
 class FileDropListWidget(QListWidget):

@@ -204,6 +204,7 @@ QLineEdit::placeholder {
 }
 
 QComboBox {
+    combobox-popup: 0;
     padding-left: {{sizing.combo_left_padding}};
     padding-right: {{spacing.xl}};
     padding-top: -1px;
@@ -304,6 +305,12 @@ QComboBox QAbstractItemView::item {
 }
 
 QComboBox QAbstractItemView::item:selected {
+    color: {{colors.text_primary}};
+    background-color: {{colors.selection}};
+}
+
+QComboBox QAbstractItemView::item:hover {
+    color: {{colors.text_primary}};
     background-color: {{colors.selection}};
 }
 

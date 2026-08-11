@@ -261,22 +261,26 @@ class QtGitHubReleaseProvider(GitHubReleaseProvider):
         repository: str = GITHUB_REPOSITORY,
         client: QtNetworkClient | None = None,
         timeout: float = 15.0,
+        token: str = "",
     ):
         self.repository = repository.strip().strip("/")
         self.client = client or QtNetworkClient()
         self.timeout = timeout
+        self.token = token.strip()
 
     def check_latest(self, platform_key: str) -> UpdateRelease | None:
         if not self.repository: raise UpdateNotConfigured("GitHub repository is not configured")
         self._asset_name(platform_key)
         try:
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "MochiStar-Update-Checker",
+            }
+            if self.token: headers["Authorization"] = f"Bearer {self.token}"
             payload = self.client.read(
                 f"https://api.github.com/repos/{self.repository}/releases?per_page=30",
-                {
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                    "User-Agent": "MochiStar-Update-Checker",
-                },
+                headers,
                 self.timeout,
                 2 * 1024 * 1024,
             )

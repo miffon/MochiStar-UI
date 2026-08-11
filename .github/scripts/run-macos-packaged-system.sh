@@ -59,7 +59,7 @@ run_probe() {
 
 # packaged application update 和 yt-dlp probes
 run_probe update "" update
-uv run python system_tests/macos/local_media_server.py --port 38473 >"$result_dir/media-server.log" 2>&1 &
+uv run python macTest/local_media_server.py --port 38473 >"$result_dir/media-server.log" 2>&1 &
 media_server_pid=$!
 for _attempt in 1 2 3 4 5; do
   if curl --fail --silent --head http://127.0.0.1:38473/fixture.mp4 >/dev/null; then break; fi

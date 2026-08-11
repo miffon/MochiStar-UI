@@ -72,7 +72,9 @@ def run_system_probe(mode: str, url: str = "") -> int:
     report: dict[str, Any] = {"mode": mode, "environment": _environment_report(), "success": False}
     try:
         if mode == "update":
-            release = QtGitHubReleaseProvider().check_latest(current_platform_key())
+            release = QtGitHubReleaseProvider(token=os.environ.get("MOCHISTAR_GITHUB_TOKEN", "")).check_latest(
+                current_platform_key()
+            )
             report["release"] = str(release.version) if release else None
         elif mode == "media-analysis":
             service = YtDlpService()
@@ -97,6 +99,8 @@ def run_system_probe(mode: str, url: str = "") -> int:
             raise ValueError(f"Unknown system test: {mode}")
         report["success"] = True
     except Exception as error:
+        if "failure" not in report:
+            report["failure"] = {"category": classify_media_failure(str(error)), "reason": str(error)}
         report["error"] = str(error)
         report["traceback"] = traceback.format_exc()
         logging.getLogger(__name__).exception("System probe failed")

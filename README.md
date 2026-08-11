@@ -20,18 +20,6 @@
 
 下載 Actions artifacts 前需要先登入 GitHub
 
-### macOS 獨立系統測試
-
-維護者可前往 [macOS System Test Actions 頁面](https://github.com/miffon/MochiStar-UI/actions/workflows/macos-system-test.yml) 手動執行測試
-
-測試會在 Apple Silicon 與 Intel runner 驗證封裝程式、網路、yt-dlp、外部工具與權限，並提供下列 artifacts:
-
-- `macos-ui-arm64-*`: 雙主題、雙語的逐頁截圖與 HTML 圖集
-- `macos-system-arm64-*`: Apple Silicon packaged application 診斷
-- `macos-system-intel-*`: Intel packaged application 診斷
-
-UI 只顯示簡短錯誤，完整 traceback 與 yt-dlp 診斷保存在 system test artifact
-
 ## 後續更新
 MochiStar 預設自動檢查更新, 有新的更新時會通知你, 協助你下載更新:
 

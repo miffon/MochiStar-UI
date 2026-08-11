@@ -53,7 +53,7 @@ from models import (
 )
 from panels import (
     AnalyzePanel, BottomStatusBar, ConversionPanel, FileAnalysisPanel, ReplacementPanel,
-    LogPanel, QueuePanel, SettingsPanel, SubtitlePanel,
+    LogPanel, QueuePanel, RoundedProgressBar, SettingsPanel, SubtitlePanel,
 )
 from release_config import IS_TEST_BUILD
 from storage import AppStorage, Settings
@@ -75,6 +75,32 @@ from version import DISPLAY_VERSION, __version__
 WINDOW_CORNER_RADIUS = 8
 WINDOW_BORDER_INSET = 2.5
 WINDOW_BORDER_RADIUS = 6
+
+
+def create_update_progress_dialog(parent: QWidget) -> QProgressDialog:
+    """建立使用共用圓角進度條的更新下載視窗"""
+    dialog = QProgressDialog("", tr("Cancel"), 0, 100, parent)
+    progress_bar = RoundedProgressBar(dialog)
+    progress_bar.setTextVisible(False)
+    dialog.setBar(progress_bar)
+    dialog.setWindowTitle(tr("Application Updates"))
+    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    dialog.setAutoClose(False)
+    dialog.setAutoReset(False)
+    update_progress_dialog(dialog, 0, 100)
+    return dialog
+
+
+def update_progress_dialog(dialog: QProgressDialog, received: int, total: int) -> None:
+    """更新下載進度, 未知總大小時不顯示百分比"""
+    if total <= 0:
+        dialog.setRange(0, 0)
+        dialog.setLabelText(tr("Downloading update file..."))
+        return
+    percent = min(100, max(0, int(received * 100 / total)))
+    dialog.setRange(0, 100)
+    dialog.setValue(percent)
+    dialog.setLabelText(f"{tr('Downloading update file...')} {percent}%")
 
 
 def _rounded_rect_region(rect: QRect, radius: int) -> QRegion:
@@ -1251,19 +1277,14 @@ class MainWindow(QMainWindow):
         self.settings_panel.set_update_info(
             DISPLAY_VERSION, "Downloading version {version}...", version=str(release.version),
         )
-        dialog = QProgressDialog(tr("Downloading update file..."), tr("Cancel"), 0, 100, self)
-        dialog.setWindowTitle(tr("Application Updates"))
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
+        dialog = create_update_progress_dialog(self)
         dialog.canceled.connect(self.update_controller.cancel_download)
         dialog.show()
         self._update_progress_dialog = dialog
 
     def _update_download_progress(self, received: int, total: int) -> None:
         if self._update_progress_dialog:
-            percent = min(100, int(received * 100 / total)) if total > 0 else 0
-            self._update_progress_dialog.setValue(percent)
+            update_progress_dialog(self._update_progress_dialog, received, total)
 
     def _update_download_succeeded(self, update: DownloadedUpdate) -> None:
         self._close_update_progress()

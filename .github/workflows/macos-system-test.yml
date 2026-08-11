@@ -1,6 +1,6 @@
-name: macOS System Test
+name: macTest
 
-run-name: macOS system test
+run-name: macTest
 
 on:
   workflow_dispatch:
@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   media-url-preflight:
@@ -48,39 +49,21 @@ jobs:
         env:
           MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
         run: |
-          mkdir -p system-test-results/url-preflight
-          uv run python system_tests/macos/preflight_media_url.py \
-            --url "$MOCHISTAR_TEST_MEDIA_URL" --output system-test-results/url-preflight
-
-      - name: Build URL preflight bundle
-        if: ${{ always() && steps.dependencies.outcome == 'success' }}
-        shell: bash
-        run: |
-          uv run python system_tests/macos/build_artifact_bundle.py \
-            --source system-test-results/url-preflight \
-            --output system-test-results/final-url-preflight \
-            --title "MochiStar media URL preflight"
-
-      - name: Upload URL preflight diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-url-preflight
-          path: system-test-results/final-url-preflight
-          if-no-files-found: warn
-          retention-days: 14
+          mkdir -p macTest-results/preflight
+          uv run python macTest/preflight_media_url.py \
+            --url "$MOCHISTAR_TEST_MEDIA_URL" --output macTest-results/preflight
 
       - name: Upload raw URL preflight diagnostics
         if: ${{ always() && inputs.include_raw_diagnostics }}
         uses: actions/upload-artifact@v7
         with:
-          name: macos-debug-url-preflight
-          path: system-test-results/url-preflight
+          name: debug-preflight
+          path: macTest-results/preflight
           if-no-files-found: warn
           retention-days: 14
 
   script-system:
-    name: macOS 15 ${{ matrix.architecture }} script system test
+    name: macOS 15 ${{ matrix.architecture }} script test
     needs: media-url-preflight
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
@@ -101,7 +84,7 @@ jobs:
         shell: bash
         run: |
           printf '%s\n\nGITHUB_REPOSITORY = "%s"\nIS_TEST_BUILD = True\n' \
-            '"""保存 system test 注入的 Release 設定"""' "$GITHUB_REPOSITORY" \
+            '"""保存 macTest 注入的 Release 設定"""' "$GITHUB_REPOSITORY" \
             > src/release_config.py
 
       - name: Install uv
@@ -117,11 +100,11 @@ jobs:
         if: ${{ always() && steps.dependencies.outcome == 'success' }}
         shell: bash
         env:
-          MOCHISTAR_RESULT_DIR: system-test-results/platform
+          MOCHISTAR_RESULT_DIR: macTest-results/platform
         run: |
           set -o pipefail
           mkdir -p "$MOCHISTAR_RESULT_DIR"
-          uv run python system_tests/macos/run_platform_checks.py \
+          uv run python macTest/run_platform_checks.py \
             2>&1 | tee "$MOCHISTAR_RESULT_DIR/runner.log"
 
       - name: Run source application probes
@@ -129,57 +112,58 @@ jobs:
         shell: bash
         env:
           MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
+          MOCHISTAR_GITHUB_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p system-test-results/probes
-          uv run python system_tests/macos/run_source_probes.py \
-            --media-url "$MOCHISTAR_TEST_MEDIA_URL" --output system-test-results/probes
+          mkdir -p macTest-results/probes
+          uv run python macTest/run_source_probes.py \
+            --media-url "$MOCHISTAR_TEST_MEDIA_URL" --output macTest-results/probes
 
       - name: Capture UI and run live analysis
         if: ${{ always() && steps.dependencies.outcome == 'success' }}
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p system-test-results/ui
-          QT_SCALE_FACTOR=1 uv run python system_tests/macos/capture_ui.py \
-            --output system-test-results/ui 2>&1 | tee system-test-results/ui/runner.log
+          mkdir -p macTest-results/ui
+          QT_SCALE_FACTOR=1 uv run python macTest/capture_ui.py \
+            --output macTest-results/ui 2>&1 | tee macTest-results/ui/runner.log
 
       - name: Add script result summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## macOS ${{ matrix.architecture }} script system test"
+            echo "## macOS ${{ matrix.architecture }} script test"
             echo
             echo "Runner: ${{ matrix.runner }}"
-            if [ -f system-test-results/probes/update.json ] && \
-               [ -f system-test-results/probes/media-local.json ] && \
-               [ -f system-test-results/probes/media-external.json ]; then
+            if [ -f macTest-results/probes/update.json ] && \
+               [ -f macTest-results/probes/media-local.json ] && \
+               [ -f macTest-results/probes/media-external.json ]; then
               echo "Source application probes produced diagnostic reports"
             else
               echo "One or more source probe reports are missing"
             fi
-            if [ -f system-test-results/ui/report.json ]; then
+            if [ -f macTest-results/ui/report.json ]; then
               echo "Generated page, dropdown, dialog, and live analysis screenshots"
             else
               echo "UI capture stopped before report.json was created, inspect runner.log"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build script system bundle
+      - name: Build script test bundle
         if: ${{ always() && steps.dependencies.outcome == 'success' }}
         shell: bash
         run: |
-          uv run python system_tests/macos/build_artifact_bundle.py \
-            --source system-test-results \
-            --output system-test-results/final-script-${{ matrix.architecture }} \
-            --title "MochiStar macOS ${{ matrix.architecture }} script system test"
+          uv run python macTest/build_artifact_bundle.py \
+            --source macTest-results \
+            --output macTest-results/final-script-${{ matrix.architecture }} \
+            --title "MochiStar ${{ matrix.architecture }} script test"
 
-      - name: Upload script system diagnostics
+      - name: Upload script test staging bundle
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: macos-script-${{ matrix.architecture }}
-          path: system-test-results/final-script-${{ matrix.architecture }}
+          name: macTest-staging-script-${{ matrix.architecture }}
+          path: macTest-results/final-script-${{ matrix.architecture }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -187,10 +171,10 @@ jobs:
         if: ${{ always() && inputs.include_raw_diagnostics }}
         uses: actions/upload-artifact@v7
         with:
-          name: macos-debug-script-${{ matrix.architecture }}
+          name: debug-script-${{ matrix.architecture }}
           path: |
-            system-test-results
-            !system-test-results/final-*/**
+            macTest-results
+            !macTest-results/final-*/**
           if-no-files-found: warn
           retention-days: 14
 
@@ -232,16 +216,17 @@ jobs:
 
       - name: Build release-equivalent macOS app
         shell: bash
-        run: bash .github/scripts/build-macos-app.sh MochiStar-system-test.dmg
+        run: bash .github/scripts/build-macos-app.sh MochiStar-macTest.dmg
 
       - name: Run packaged application probes
         shell: bash
         env:
           MOCHISTAR_TEST_MEDIA_URL: ${{ inputs.media_url }}
+          MOCHISTAR_GITHUB_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p system-test-results/packaged
+          mkdir -p macTest-results/packaged
           bash .github/scripts/run-macos-packaged-system.sh \
-            MochiStar-system-test.dmg system-test-results/packaged "$MOCHISTAR_TEST_MEDIA_URL"
+            MochiStar-macTest.dmg macTest-results/packaged "$MOCHISTAR_TEST_MEDIA_URL"
 
       - name: Add packaged result summary
         if: always()
@@ -252,30 +237,30 @@ jobs:
             echo
             echo "Runner: ${{ matrix.runner }}"
             echo "Architecture: $(uname -m)"
-            if [ -f system-test-results/packaged/update.json ] && \
-               [ -f system-test-results/packaged/media-local.json ] && \
-               [ -f system-test-results/packaged/media-external.json ]; then
+            if [ -f macTest-results/packaged/update.json ] && \
+               [ -f macTest-results/packaged/media-local.json ] && \
+               [ -f macTest-results/packaged/media-external.json ]; then
               echo "Packaged application probes produced diagnostic reports"
             else
               echo "One or more packaged probe reports are missing, inspect build and probe logs"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build packaged system bundle
+      - name: Build packaged test bundle
         if: ${{ always() && steps.dependencies.outcome == 'success' }}
         shell: bash
         run: |
-          uv run python system_tests/macos/build_artifact_bundle.py \
-            --source system-test-results \
-            --output system-test-results/final-package-${{ matrix.architecture }} \
-            --title "MochiStar macOS ${{ matrix.architecture }} packaged system test"
+          uv run python macTest/build_artifact_bundle.py \
+            --source macTest-results \
+            --output macTest-results/final-package-${{ matrix.architecture }} \
+            --title "MochiStar ${{ matrix.architecture }} packaged test"
 
       - name: Upload packaged diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: macos-package-${{ matrix.architecture }}
-          path: system-test-results/final-package-${{ matrix.architecture }}
+          name: macTest-staging-package-${{ matrix.architecture }}
+          path: macTest-results/final-package-${{ matrix.architecture }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -283,9 +268,55 @@ jobs:
         if: ${{ always() && inputs.include_raw_diagnostics }}
         uses: actions/upload-artifact@v7
         with:
-          name: macos-debug-package-${{ matrix.architecture }}
+          name: debug-package-${{ matrix.architecture }}
           path: |
-            system-test-results
-            !system-test-results/final-*/**
+            macTest-results
+            !macTest-results/final-*/**
           if-no-files-found: warn
           retention-days: 14
+
+  bundle-results:
+    name: Bundle macTest results
+    if: ${{ always() && needs['media-url-preflight'].result == 'success' }}
+    needs: [media-url-preflight, script-system, packaged-system]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download architecture results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: macTest-staging-*
+          path: staging
+
+      - name: Arrange one result bundle
+        shell: bash
+        run: |
+          mkdir -p macTest-results
+          for directory in staging/macTest-staging-*; do
+            name="${directory##*/macTest-staging-}"
+            mv "$directory" "macTest-results/$name"
+          done
+
+      - name: Upload macTest results
+        id: final-upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: macTest-results
+          path: macTest-results
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove staging artifacts
+        if: ${{ steps.final-upload.outcome == 'success' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate \
+            --jq '.artifacts[] | select(.name | startswith("macTest-staging-")) | .id' > staging-artifact-ids.txt
+          while IFS= read -r artifact_id; do
+            if [ -n "$artifact_id" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+            fi
+          done < staging-artifact-ids.txt
