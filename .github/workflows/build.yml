@@ -12,7 +12,7 @@ on:
         description: Test build version, must match pyproject.toml
         required: true
         type: string
-        default: "1.0.0"
+        default: "1.0.2"
   push:
     tags:
       - "v*"
@@ -220,7 +220,10 @@ jobs:
         run: uv run pytest
 
       - name: Build and package macOS app
-        run: bash .github/scripts/build-macos-app.sh "$ARTIFACT_NAME"
+        run: >-
+          bash .github/scripts/build-macos-app.sh
+          "$ARTIFACT_NAME"
+          "${{ needs['validate-version'].outputs.display_version }}"
 
       - name: Validate macOS DMG
         run: |
@@ -232,6 +235,8 @@ jobs:
           }
           trap cleanup EXIT
           hdiutil attach -readonly -nobrowse -mountpoint "$mount_path" "$ARTIFACT_NAME"
+          volume_name="$(diskutil info -plist "$mount_path" | plutil -extract VolumeName raw -)"
+          test "$volume_name" = "MochiStar ${{ needs['validate-version'].outputs.display_version }} Installer"
           test -d "$mount_path/MochiStar.app"
           test -L "$mount_path/Applications"
           test "$(readlink "$mount_path/Applications")" = "/Applications"

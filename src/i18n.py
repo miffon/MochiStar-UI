@@ -342,7 +342,7 @@ _ZH_TW = {
     "Open Download Folder": "開啟下載資料夾",
     "Later": "稍後處理",
     "Close MochiStar, extract the downloaded ZIP file, then replace the old MochiStar folder with the extracted folder. Your settings and queue are stored separately.": "請關閉 MochiStar、解壓縮下載的 ZIP，然後用解壓後的 MochiStar 資料夾取代舊版。設定與列隊資料存放在其他位置，不會被清除。",
-    "Close MochiStar, open the downloaded DMG, then drag MochiStar.app to Applications and replace the old version. If macOS blocks it, use Open Anyway in Privacy & Security.": "請關閉 MochiStar、開啟下載的 DMG，然後將 MochiStar.app 拖入「應用程式」並取代舊版。若 macOS 阻擋開啟，請到「隱私權與安全性」選擇「仍要打開」。",
+    "Close MochiStar, open the downloaded DMG, then drag MochiStar.app to Applications and replace the old version. When installation is complete, eject the MochiStar volume in Finder. If macOS blocks it, use Open Anyway in Privacy & Security.": "請關閉 MochiStar、開啟下載的 DMG，然後將 MochiStar.app 拖入「應用程式」並取代舊版。安裝完成後，請在 Finder 中退出 MochiStar 卷宗。若 macOS 阻擋開啟，請到「隱私權與安全性」選擇「仍要打開」。",
     "Close MochiStar, extract the downloaded archive, then replace the old MochiStar folder. The archive preserves the executable permission.": "請關閉 MochiStar、解壓縮下載的封存檔，然後取代舊的 MochiStar 資料夾。封存檔會保留執行權限。",
     "Update download failed: {error}": "更新下載失敗: {error}",
     "Update File Download Failed": "更新檔下載失敗",

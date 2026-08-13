@@ -2,6 +2,8 @@
 set -euo pipefail
 
 artifact_name="${1:?DMG output path is required}"
+volume_version="${2:-$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')}"
+volume_name="MochiStar $volume_version Installer"
 
 # 建立原生 macOS application bundle
 uv run --with nuitka==4.1.3 --with ordered-set --with zstandard python -m nuitka \
@@ -33,4 +35,4 @@ ln -s /Applications artifact/dmg-root/Applications
 chmod +x artifact/dmg-root/MochiStar.app/Contents/MacOS/*
 xattr -cr artifact/dmg-root/MochiStar.app
 codesign --force --deep --sign - artifact/dmg-root/MochiStar.app
-hdiutil create -volname MochiStar -srcfolder artifact/dmg-root -ov -format UDZO "$artifact_name"
+hdiutil create -volname "$volume_name" -srcfolder artifact/dmg-root -ov -format UDZO "$artifact_name"

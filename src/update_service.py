@@ -29,7 +29,8 @@ _MANUAL_UPDATE_INSTRUCTIONS = {
     ),
     "macos": (
         "Close MochiStar, open the downloaded DMG, then drag MochiStar.app to Applications and replace "
-        "the old version. If macOS blocks it, use Open Anyway in Privacy & Security."
+        "the old version. When installation is complete, eject the MochiStar volume in Finder. "
+        "If macOS blocks it, use Open Anyway in Privacy & Security."
     ),
     "linux": (
         "Close MochiStar, extract the downloaded archive, then replace the old MochiStar folder. "

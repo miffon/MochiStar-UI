@@ -114,10 +114,12 @@ def test_manual_update_instructions_are_platform_specific() -> None:
     assert "ZIP" in manual_update_instructions("windows")
     assert "DMG" in manual_update_instructions("macos")
     assert "Applications" in manual_update_instructions("macos")
+    assert "eject" in manual_update_instructions("macos")
     assert "executable permission" in manual_update_instructions("linux")
     set_language("zh_TW")
     assert "DMG" in tr(manual_update_instructions("macos"))
     assert "應用程式" in tr(manual_update_instructions("macos"))
+    assert "退出" in tr(manual_update_instructions("macos"))
     assert tr("No stable release is available yet") == "目前尚無正式版本"
     assert tr("This test build is newer than the latest stable release") == "目前測試版比最新正式版更新"
     set_language("en")

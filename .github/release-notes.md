@@ -2,7 +2,7 @@
 
 更新:
 - `MochiStar-Windows-portable.zip`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版
-- `MochiStar-macOS-installer.dmg`: 關閉 MochiStar, 開啟 DMG 後將 `MochiStar.app` 拖入「應用程式」並取代舊版
+- `MochiStar-macOS-installer.dmg`: 關閉 MochiStar, 開啟 DMG 後將 `MochiStar.app` 拖入「應用程式」並取代舊版, 安裝完成後請在 Finder 中退出 MochiStar 卷宗
 - `MochiStar-Linux.tar.gz`: 關閉 MochiStar, 解壓縮後用新的 `MochiStar` 資料夾取代舊版, archive 會保留執行權限
 
 使用前請依需要安裝 FFmpeg 與 JavaScript Runtime, 或在「設定」指定工具目錄
