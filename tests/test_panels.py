@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QMimeData, QPoint, QUrl, Qt
+from PySide6.QtCore import QItemSelectionModel, QMimeData, QObject, QPoint, QUrl, Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import (
     QFormLayout,
     QHeaderView,
@@ -19,6 +21,8 @@ from models import (
     DownloadOptions,
     FormatInfo,
     MediaInfo,
+    ReplacementClipTiming,
+    ReplacementTimeline,
     SubtitleOptions,
     SubtitleSelection,
     SubtitleTrack,
@@ -35,6 +39,8 @@ from panels import (
     FileDropListWidget,
     LogPanel,
     NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
     QueuePanel,
     ReplacementPanel,
     RoundedProgressBar,
@@ -44,6 +50,7 @@ from panels import (
 )
 from storage import Settings
 from theme import load_theme_stylesheet, theme_color
+from replacement_editor import ReplacementEditor, TimelineWidget, _PreviewSegment
 
 TEST_PATH = Path("test-data")
 
@@ -490,6 +497,7 @@ def test_replacement_panel_builds_single_source_payload_and_persists_no_paths(ap
     panel = ReplacementPanel()
     visual, audio = sample_media("picture.png", "music.wav")
     panel.output_directory_edit.setText(str(visual.parent))
+    panel.output_name_edit.setText("aligned-output")
     panel.visual_card.set_path(str(visual))
     panel.audio_card.set_path(str(audio))
     panel.set_source_probe(str(visual), {
@@ -509,16 +517,454 @@ def test_replacement_panel_builds_single_source_payload_and_persists_no_paths(ap
     saved = panel.persistent_settings()
 
     assert payload["visual_path"] == str(visual) and payload["audio_path"] == str(audio)
+    assert payload["output_name"] == "aligned-output" and "output_name" not in saved
     assert payload["custom_duration"] == 10.5
     assert payload["visual_delay"] == 0.25 and payload["audio_delay"] == -0.5
     assert payload["trim_start"] == 1 and payload["aspect_ratio"] == "9:16"
     assert "visual_path" not in saved and "audio_path" not in saved
+    assert "timeline" in payload and "timeline" not in saved
+    assert "custom_duration" not in saved and "audio_delay" not in saved
+    assert saved["preview_memory_mib"] == 256 and saved["preview_block_limit"] == 0
+    assert saved["preview_segment_duration"] == 20
+    assert saved["preview_lead_ratio"] == 0.5
+    assert "preview_extension" not in saved and "preview_ahead" not in saved
     assert panel.splitter.count() == 2
     assert isinstance(panel.splitter.widget(1), QScrollArea)
     assert panel.settings_scroll.widgetResizable()
     assert panel.advanced_stack.parentWidget() is panel._unused_advanced_widget
     assert not panel.option_labels["video_preset"].isHidden()
     assert not panel.save_preset_button.isHidden()
+    assert not hasattr(panel, "processing_summary_label")
+    assert panel.preview_segment_spin.toolTip() == "Duration of each preview cache segment"
+    assert panel.preview_lead_ratio_spin.toolTip() == "Fraction of one cache segment reserved before the playhead"
+    assert panel.encoder_combo.toolTip() == "Prefer supported hardware transcoding acceleration"
+    assert panel.validation_label.isHidden()
+    panel.set_request_error("Invalid setting")
+    assert not panel.validation_label.isHidden()
+    panel.set_request_error("")
+    assert panel.validation_label.isHidden()
+
+
+def test_replacement_editor_displays_output_duration_without_milliseconds(app) -> None:
+    editor = ReplacementEditor()
+
+    editor._output_range_changed(ReplacementTimeline(output_in=2.5, output_out=3663.9))
+
+    assert editor.output_duration_title.text() == "Output Duration"
+    assert editor.output_duration_label.text() == "01:01:01"
+
+
+def test_timeline_initializes_natural_lengths_and_pairs_static_visual(app, sample_media) -> None:
+    timeline = TimelineWidget()
+    picture, audio = sample_media("picture.png", "music.wav")
+    timeline.set_source("visual", str(picture))
+    timeline.set_source_probe("visual", {
+        "duration": None, "streams": [{"codec_type": "video", "codec_name": "png"}],
+    })
+    assert timeline.timings["visual"].timeline_duration == 5
+    assert timeline.timings["visual"].source_out is None
+
+    timeline.set_source("audio", str(audio))
+    timeline.set_source_probe("audio", {
+        "duration": 12.0,
+        "streams": [{"codec_type": "audio", "duration": "12", "sample_rate": "48000"}],
+    })
+
+    assert timeline.timings["visual"].timeline_duration == 12
+    assert timeline.timings["audio"] == ReplacementClipTiming(0, 12, 0, 12, False)
+    assert timeline.output_in == 0 and timeline.output_out == 12
+
+
+def test_timeline_zoom_snap_and_three_timing_layers_are_independent(app) -> None:
+    widget = TimelineWidget()
+    timeline = ReplacementTimeline(
+        visual=ReplacementClipTiming(1, 5, 2, 4, True),
+        audio=ReplacementClipTiming(0.5, 6.5, 0, 6, False),
+        output_in=1.5, output_out=8,
+    )
+    widget.set_timeline(timeline)
+    original_scale = widget.pixels_per_second
+    widget.zoom_by(1.5)
+
+    assert widget.timeline() == timeline
+    assert widget.pixels_per_second > original_scale
+    assert widget.snapping
+    assert widget._snap(1.51) == 1.5
+    assert widget._snap(1.51, bypass=True) == 1.51
+    widget.set_snapping(False)
+    assert widget._snap(1.2344) == 1.234
+
+
+def test_timeline_preserves_cache_segment_boundaries(app) -> None:
+    widget = TimelineWidget()
+    widget.set_cached_ranges([(0, 60)])
+    widget.set_cached_segments([(40, 60), (0, 20), (20, 40)])
+
+    assert widget.cached_ranges == [(0, 60)]
+    assert widget.cached_segments == [(0, 20), (20, 40), (40, 60)]
+
+
+def test_timeline_track_markers_align_clips_and_can_be_removed(app) -> None:
+    widget = TimelineWidget()
+    widget.paths = {"visual": "picture.png", "audio": "music.wav"}
+    widget.timings["visual"] = ReplacementClipTiming(0, 10, 0, 10)
+    widget.timings["audio"] = ReplacementClipTiming(0, 10, 0, 10)
+    selections = []
+    widget.marker_selection_changed.connect(selections.append)
+
+    widget.set_track_marker("visual", 2)
+    widget.set_track_marker("audio", 4)
+
+    assert widget.track_markers == {"visual": 2, "audio": 4}
+    assert widget.selected_marker == "audio"
+    assert widget._snap(3.9) == 4
+    assert widget._marker_alignment_delta("visual", 1.9, widget.timings["visual"]) == 2
+    assert widget._marker_alignment_delta("visual", 1.9, widget.timings["visual"], bypass=True) is None
+    assert selections == [True, True]
+
+    widget.remove_selected_marker()
+
+    assert widget.track_markers == {"visual": 2, "audio": None}
+    assert widget.selected_marker is None
+    assert selections == [True, True, False]
+
+
+def test_timeline_zoom_centers_on_playhead(app) -> None:
+    widget = TimelineWidget()
+    widget.resize(600, 240)
+    widget.output_out = 60
+    widget.playhead = 30
+    widget.show()
+    app.processEvents()
+
+    widget.zoom_by(1.5)
+
+    content_width = widget.viewport().width() - widget._content_left() - widget.RIGHT_GUTTER
+    expected_x = widget._content_left() + content_width / 2
+    assert abs(widget._x_at(widget.playhead) - expected_x) <= 1
+
+
+def test_timeline_wheel_scroll_and_middle_drag_move_horizontally(app) -> None:
+    widget = TimelineWidget()
+    widget.resize(500, 240)
+    widget.output_out = 60
+    widget._update_scrollbar()
+    widget.horizontalScrollBar().setValue(100)
+
+    widget._scroll_timeline(-50)
+    assert widget.horizontalScrollBar().value() == 150
+
+    widget._pan_start = (200, 150)
+    widget._pan_to(125)
+    assert widget.horizontalScrollBar().value() == 225
+
+
+def test_timeline_fit_handles_long_media_and_tracks_follow_available_height(app) -> None:
+    widget = TimelineWidget()
+    widget.resize(500, 240)
+    widget.show()
+    app.processEvents()
+    widget.output_out = 180
+    widget.timings["visual"].timeline_duration = 180
+    widget.timings["audio"].timeline_duration = 180
+    initial_height = widget._track_rect("visual").height()
+
+    widget.fit_timeline()
+    assert widget.pixels_per_second < 4
+    assert widget.horizontalScrollBar().maximum() == 0
+    assert widget._x_at(0) - widget.LABEL_WIDTH >= 5
+
+    widget.resize(500, 360)
+    app.processEvents()
+    assert widget._track_rect("visual").height() > initial_height
+    assert widget._track_rect("visual").height() == widget._track_rect("audio").height()
+
+
+def test_overlapping_output_handles_can_be_selected_from_opposite_sides(app) -> None:
+    widget = TimelineWidget()
+    widget.output_in = widget.output_out = 1
+    x = round(widget._x_at(1))
+    y = widget.RULER_HEIGHT - 2
+
+    assert widget._output_handle_at(QPoint(x - 4, y)) == "out"
+    assert widget._output_handle_at(QPoint(x + 4, y)) == "in"
+    assert widget._output_handle_at(QPoint(x, 8)) is None
+
+
+def test_timeline_trimming_clips_asset_without_rescaling_it(app) -> None:
+    widget = TimelineWidget()
+    widget.paths["audio"] = "music.wav"
+    widget.probes["audio"] = {"duration": 10, "streams": [{"codec_type": "audio", "duration": "10"}]}
+    widget.timings["audio"] = ReplacementClipTiming(0, 10, 0, 10)
+    original_clip = widget._clip_rect("audio")
+    _visible, original_asset = widget._asset_rects("audio", original_clip)
+
+    widget.timings["audio"] = ReplacementClipTiming(2, 10, 2, 8)
+    trimmed_clip = widget._clip_rect("audio")
+    _visible, trimmed_asset = widget._asset_rects("audio", trimmed_clip)
+
+    assert trimmed_clip.left() > original_clip.left()
+    assert trimmed_clip.width() < original_clip.width()
+    assert trimmed_asset.left() == original_asset.left()
+    assert trimmed_asset.width() == original_asset.width()
+
+
+def test_timeline_video_thumbnails_keep_their_aspect_ratio_when_zooming(app) -> None:
+    class RecordingPainter:
+        def __init__(self): self.targets = []
+        def save(self): pass
+        def restore(self): pass
+        def setClipRect(self, _rect): pass
+        def setOpacity(self, _opacity): pass
+        def drawPixmap(self, target, _asset, _source): self.targets.append(target)
+
+    widget = TimelineWidget()
+    widget.paths["visual"] = "picture.mp4"
+    widget.probes["visual"] = {"duration": 10, "streams": [{"codec_type": "video", "duration": "10"}]}
+    widget.timings["visual"] = ReplacementClipTiming(0, 10, 0, 10)
+    widget.pixels_per_second = 50
+    widget.resize(700, 240)
+    painter = RecordingPainter()
+
+    widget._paint_video_thumbnails(painter, widget._clip_rect("visual"), QPixmap(1920, 90), 220)
+
+    assert len(painter.targets) > 1
+    assert all(abs(target.width() / target.height() - 16 / 9) < 0.01 for target in painter.targets)
+
+
+def test_replacement_editor_uses_svg_icons(app) -> None:
+    editor = ReplacementEditor()
+
+    icon_buttons = (
+        editor.preview.play_button, editor.preview.stop_button,
+        editor.add_marker_button, editor.remove_marker_button, editor.snap_button,
+        editor.zoom_out_button, editor.fit_button, editor.zoom_in_button,
+    )
+    assert all(not button.icon().isNull() for button in icon_buttons)
+    assert all(
+        button.property("role") == "ghost"
+        for button in (editor.snap_button, editor.zoom_out_button, editor.fit_button, editor.zoom_in_button)
+    )
+    editor.add_marker_button.click()
+    assert editor.add_marker_button.isChecked() and editor.timeline.marker_placement
+    editor.timeline.paths["visual"] = "picture.mp4"
+    editor.timeline.timings["visual"] = ReplacementClipTiming(0, 10, 0, 10)
+    editor.timeline.set_track_marker("visual", 2.5)
+    assert not editor.add_marker_button.isChecked()
+    assert editor.timeline.track_markers["visual"] == 2.5 and editor.remove_marker_button.isEnabled()
+    assert editor.timeline_panel.property("role") == "card"
+    assert editor.timeline.parentWidget() is editor.timeline_panel
+    assert editor.vertical_splitter.orientation() == Qt.Orientation.Vertical
+    assert editor.vertical_splitter.count() == 2
+    assert editor.minimumWidth() == 240
+    assert editor.vertical_splitter.widget(0) is editor.preview
+    assert editor.vertical_splitter.widget(1) is editor.timeline_panel
+    assert not editor.vertical_splitter.childrenCollapsible()
+    assert editor.vertical_splitter.handleWidth() == 9
+    assert not any(label.text() == "Timeline" for label in editor.timeline_panel.findChildren(QLabel))
+    assert not hasattr(editor.preview, "progress")
+    assert "Alt" in editor.snap_button.toolTip() and "Option" in editor.snap_button.toolTip()
+    for buttons in editor.timeline.track_buttons.values():
+        assert buttons["browse"].text() == tr("Browse Files")
+        assert buttons["loop"].text() == "" and not buttons["loop"].icon().isNull()
+        assert buttons["clear"].text() == "" and not buttons["clear"].icon().isNull()
+        assert buttons["loop"].property("iconOnly") and buttons["clear"].property("iconOnly")
+
+
+def test_preview_cache_miss_resets_play_button_state(app) -> None:
+    class FakePlayer:
+        paused = False
+
+        def pause(self): self.paused = True
+
+    preview = ReplacementEditor().preview
+    real_player = preview.player
+    preview.player = FakePlayer()
+
+    preview.mark_stale()
+
+    assert preview.player.paused
+    assert preview.play_button.accessibleName() == tr("Play")
+    assert not preview.play_button.isEnabled()
+    preview.player = real_player
+
+
+def test_preview_pause_resumes_in_place_and_stop_returns_to_session_origin(app) -> None:
+    class FakePlayer:
+        def __init__(self):
+            self.state = QMediaPlayer.PlaybackState.PlayingState
+            self.current_position = 3000
+
+        def playbackState(self): return self.state
+        def position(self): return self.current_position
+        def duration(self): return 10000
+        def setPosition(self, value): self.current_position = value
+        def pause(self): self.state = QMediaPlayer.PlaybackState.PausedState
+        def play(self): self.state = QMediaPlayer.PlaybackState.PlayingState
+
+    preview = ReplacementEditor().preview
+    real_player = preview.player
+    preview.player = FakePlayer()
+    preview.window_start = 0
+    preview._playback_origin = 0
+    preview._playback_session = True
+    positions, seeks = [], []
+    preview.position_changed.connect(positions.append)
+    preview.seek_timeline = lambda value: seeks.append(value) or True
+
+    preview._pending_seek = 2000
+    preview._load_in_progress = True
+    preview._media_status_changed(QMediaPlayer.MediaStatus.LoadedMedia)
+    preview.player.current_position = 3000
+    preview._media_status_changed(QMediaPlayer.MediaStatus.BufferedMedia)
+    assert preview.player.position() == 3000
+
+    preview._toggle_playback()
+    assert preview.player.position() == 3000
+    preview._toggle_playback()
+    assert preview.player.position() == 3000 and preview._playback_origin == 0
+    preview._stop_playback()
+
+    assert seeks == [0]
+    assert positions[-1] == 0
+
+    preview.timeline_in, preview.timeline_out = 0, 2.5
+    preview.player.state = QMediaPlayer.PlaybackState.PlayingState
+    preview.player.current_position = 3000
+    preview._player_position_changed(3000)
+    assert preview.player.playbackState() == QMediaPlayer.PlaybackState.PausedState
+    assert preview.player.position() == 2500
+    assert positions[-1] == 2.5
+    preview.player = real_player
+    preview.release_preview()
+
+
+def test_preview_serializes_segment_loads_and_clears_the_old_source(app) -> None:
+    class FakePlayer(QObject):
+        def __init__(self):
+            super().__init__()
+            self.source_calls, self.clear_calls, self.current_position = [], 0, 0
+
+        def stop(self): self.current_position = 0
+        def setSource(self, _url): self.clear_calls += 1
+        def setSourceDevice(self, device, url): self.source_calls.append((device, url))
+        def setPosition(self, value): self.current_position = value
+        def position(self): return self.current_position
+        def play(self): pass
+
+    preview = ReplacementEditor().preview
+    real_player = preview.player
+    preview.player = FakePlayer()
+    first = _PreviewSegment(b"first", 0, 20)
+    second = _PreviewSegment(b"second", 20, 40)
+
+    preview._load_segment(first, 5)
+    first_buffer = preview._buffer
+    preview._load_segment(second, 25)
+    assert len(preview.player.source_calls) == 1
+    assert preview._queued_load == (second, 25, False)
+
+    preview._media_status_changed(QMediaPlayer.MediaStatus.LoadedMedia)
+    app.processEvents()
+    assert len(preview.player.source_calls) == 2
+    assert preview.player.clear_calls == 2
+    assert preview._load_in_progress and first_buffer is not None and not first_buffer.isOpen()
+
+    preview._media_status_changed(QMediaPlayer.MediaStatus.LoadedMedia)
+    assert not preview._load_in_progress
+    preview.player = real_player
+    preview.release_preview()
+
+
+def test_preview_defers_end_of_media_handoff_to_the_event_loop(app) -> None:
+    preview = ReplacementEditor().preview
+    first = _PreviewSegment(b"first", 0, 20)
+    second = _PreviewSegment(b"second", 20, 40)
+    preview._segments = [first, second]
+    preview._current_segment = first
+    preview.window_start, preview.window_end = 0, 20
+    preview.timeline_out = 40
+    preview._playback_session = True
+    loads = []
+    preview._load_segment = lambda *values: loads.append(values)
+
+    preview._media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+    assert not loads and preview._handoff_scheduled
+
+    app.processEvents()
+    assert loads == [(second, 20, True)]
+    assert not preview._handoff_scheduled
+
+
+def test_preview_segment_boundary_selects_the_following_segment(app) -> None:
+    preview = ReplacementEditor().preview
+    first = _PreviewSegment(b"first", 0, 20)
+    second = _PreviewSegment(b"second", 20, 40)
+    preview._segments = [first, second]
+    preview.timeline_out = 40
+
+    assert preview._segment_at(19.999) is first
+    assert preview._segment_at(20) is second
+    assert preview._segment_at(40) is second
+
+
+def test_preview_waits_for_the_segment_containing_the_focus(app) -> None:
+    preview = ReplacementEditor().preview
+    preview.timeline_out = 100
+    loads = []
+    preview._load_segment = lambda *values: loads.append(values)
+
+    preview.set_preview(b"later", 60, 80, 50)
+    assert not loads
+
+    preview.set_preview(b"focused", 40, 60, 50)
+    assert len(loads) == 1 and loads[0][1] == 50
+
+
+def test_replacement_preview_cache_is_a_persistent_ui_preference(app) -> None:
+    panel = ReplacementPanel()
+    panel.restore_settings({
+        "preview_memory_mib": 512, "preview_block_limit": 3,
+        "preview_segment_duration": 14, "preview_lead_ratio": 0.25,
+    })
+
+    assert panel.preview_cache_settings() == (14, 3.5, 512 * 1024 * 1024, 3)
+    assert panel.persistent_settings()["preview_memory_mib"] == 512
+    assert panel.persistent_settings()["preview_block_limit"] == 3
+    assert "preview_memory_mib" not in panel.request_payload()
+    assert panel.preview_memory_spin.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+    assert panel.preview_block_limit_spin.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+
+
+def test_replacement_preview_defaults_to_twenty_second_segments(app) -> None:
+    panel = ReplacementPanel()
+
+    assert panel.preview_cache_settings() == (20, 10, 256 * 1024 * 1024, 0)
+
+
+def test_replacement_preview_migrates_legacy_lead_in_seconds_to_ratio(app) -> None:
+    panel = ReplacementPanel()
+    panel.restore_settings({"preview_extension": 20, "preview_ahead": 10})
+
+    assert panel.preview_cache_settings() == (20, 10, 256 * 1024 * 1024, 0)
+    assert panel.persistent_settings()["preview_lead_ratio"] == 0.5
+
+
+def test_scrub_coalesces_moves_and_flushes_the_final_position(app) -> None:
+    editor = ReplacementEditor()
+    seeks = []
+    editor._playhead_changed = seeks.append
+
+    editor._start_scrub(1)
+    editor._queue_scrub(2)
+    editor._queue_scrub(3)
+    assert editor._scrub_timer.isActive() and editor._scrub_timer.interval() == 100
+    editor._flush_scrub()
+    editor._queue_scrub(4)
+    editor._finish_scrub(5)
+
+    assert seeks == [1, 3, 5]
+    assert not editor._scrub_timer.isActive()
 
 
 @pytest.mark.parametrize(
@@ -690,6 +1136,22 @@ def test_combo_boxes_ignore_mouse_wheel(app):
     combo.wheelEvent(event)  # type: ignore[arg-type]
     assert event.ignored
     assert combo.currentIndex() == 0
+
+
+@pytest.mark.parametrize("spin_type", [NoWheelSpinBox, NoWheelDoubleSpinBox])
+def test_spin_boxes_ignore_mouse_wheel(app, spin_type):
+    class FakeWheelEvent:
+        ignored = False
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    spin = spin_type()
+    spin.setValue(5)
+    event = FakeWheelEvent()
+    spin.wheelEvent(event)  # type: ignore[arg-type]
+    assert event.ignored
+    assert spin.value() == 5
 
 
 def test_combo_popup_shows_all_items_without_covering_control(app):
@@ -1129,7 +1591,7 @@ def test_conversion_panel_switches_category_pages_without_audio_presets(app):
     assert panel.request_payload()["media_type"] == "subtitle"
     assert panel.request_payload()["target_format"] == "srt"
     assert "subtitle" not in panel._preset_controls
-    assert panel.splitter.handleWidth() == 1
+    assert panel.splitter.handleWidth() == 5
 
 
 def test_conversion_output_types_translate_to_traditional_chinese(app):
@@ -1168,6 +1630,10 @@ def test_conversion_options_are_interactive_and_have_tooltips(app):
     no_tooltip = {"output_folder", "output_type", "video_preset"}
     assert all(not panel.option_labels[key].toolTip() for key in no_tooltip)
     assert all(label.toolTip() for key, label in panel.option_labels.items() if key not in no_tooltip)
+    assert panel.target_format_combo.toolTip() == panel.option_labels["video_format"].toolTip()
+    assert panel.resolution_combo.toolTip() == panel.option_labels["resolution"].toolTip()
+    assert panel.resolution_spin.toolTip() == panel.option_labels["resolution"].toolTip()
+    assert panel.maximum_bitrate_spin.toolTip() == panel.option_labels["maximum_bitrate"].toolTip()
     assert [panel.target_format_combo.itemText(index) for index in range(panel.target_format_combo.count())] == [
         "MP4", "MOV", "MKV", "WebM",
     ]

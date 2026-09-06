@@ -9,6 +9,7 @@ volume_name="MochiStar $volume_version Installer"
 uv run --with nuitka==4.1.3 --with ordered-set --with zstandard python -m nuitka \
   --standalone \
   --enable-plugin=pyside6 \
+  --include-qt-plugins=multimedia \
   --include-package=yt_dlp \
   --include-package-data=yt_dlp \
   --nofollow-import-to=yt_dlp.extractor.lazy_extractors \

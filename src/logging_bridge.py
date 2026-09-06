@@ -6,7 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QtMsgType, Signal, qInstallMessageHandler
 
 
 LOG_FILE_PREFIX = "mochistar-"
@@ -95,6 +95,8 @@ class QtLogBridge(QObject):
         self._file_handler: _DailyFileHandler | None = None
         self._stdout_proxy = _StreamProxy(self._stdout, logging.getLogger("stdout"), logging.INFO)
         self._stderr_proxy = _StreamProxy(self._stderr, logging.getLogger("stderr"), logging.ERROR)
+        self._qt_handler = self._handle_qt_message
+        self._previous_qt_handler: Any = None
 
     def install(self) -> None:
         """安裝 UI 與 error file logging handler"""
@@ -111,9 +113,12 @@ class QtLogBridge(QObject):
         root_logger.addHandler(self._file_handler)
         sys.stdout = self._stdout_proxy
         sys.stderr = self._stderr_proxy
+        self._previous_qt_handler = qInstallMessageHandler(self._qt_handler)
 
     def restore_streams(self) -> None:
-        """還原 process 原本的 stdout、stderr 與 logging handler"""
+        """還原 process 原本的 stream、Qt message 與 logging handler"""
+        qInstallMessageHandler(self._previous_qt_handler)
+        self._previous_qt_handler = None
         if sys.stdout is self._stdout_proxy: sys.stdout = self._stdout
         if sys.stderr is self._stderr_proxy: sys.stderr = self._stderr
         root_logger = logging.getLogger()
@@ -122,6 +127,19 @@ class QtLogBridge(QObject):
             root_logger.removeHandler(self._file_handler)
             self._file_handler.close()
             self._file_handler = None
+
+    @staticmethod
+    def _handle_qt_message(message_type: QtMsgType, context: Any, message: str) -> None:
+        """將 Qt category message 轉送到 Python logging"""
+        levels = {
+            QtMsgType.QtDebugMsg: logging.DEBUG,
+            QtMsgType.QtInfoMsg: logging.INFO,
+            QtMsgType.QtWarningMsg: logging.WARNING,
+            QtMsgType.QtCriticalMsg: logging.ERROR,
+            QtMsgType.QtFatalMsg: logging.CRITICAL,
+        }
+        category = getattr(context, "category", "") or "qt"
+        logging.getLogger(category).log(levels.get(message_type, logging.INFO), message)
 
 
 class _QtLogHandler(logging.Handler):

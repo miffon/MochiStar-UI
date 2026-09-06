@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from executable_finder import find_executable
 from media_service import LogCallback, ProgressCallback, ServiceCancelled, _notify_progress
-from models import ConversionOptions, ReplacementOptions, TaskRecord
+from models import ConversionOptions, ReplacementClipTiming, ReplacementOptions, TaskRecord
 
 
 class FFmpegError(RuntimeError):
@@ -310,12 +310,19 @@ class FFmpegService:
         input_path: str | Path,
         output_dir: str | Path,
         target_format: str,
+        output_name: str = "",
     ) -> Path:
         """產生不覆寫既有檔案的輸出路徑"""
         source = Path(input_path).expanduser()
         directory = Path(output_dir).expanduser() if str(output_dir) else source.parent
         extension = target_format.lower().lstrip(".")
-        candidate = directory / f"{source.stem}.{extension}"
+        name = output_name.strip()
+        error = self.validate_output_name(name)
+        if error: raise ValueError(error)
+        suffix = f".{extension}"
+        stem = name[:-len(suffix)] if name.lower().endswith(suffix) else name
+        if name and not stem: raise ValueError("Output file name is invalid")
+        candidate = directory / f"{stem or source.stem}.{extension}"
         try:
             same_as_source = candidate.resolve() == source.resolve()
         except OSError:
@@ -326,6 +333,19 @@ class FFmpegService:
             candidate = directory / f"{source.stem} ({number}).{extension}"
             if not candidate.exists(): return candidate
             number += 1
+
+    @staticmethod
+    def validate_output_name(output_name: str) -> str:
+        """限制為 Windows、macOS 與 Linux 都能安全使用的單一檔名"""
+        name = output_name.strip()
+        if not name: return ""
+        invalid = '<>:"/\\|?*'
+        if name in {".", ".."} or name.endswith((" ", ".")) or any(ord(char) < 32 or char in invalid for char in name):
+            return "Output file name contains characters that are not supported on every platform"
+        reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{number}" for number in range(1, 10)), *(f"LPT{number}" for number in range(1, 10))}
+        if name.split(".", 1)[0].upper() in reserved:
+            return "Output file name contains characters that are not supported on every platform"
+        return ""
 
     def build_command(
         self,
@@ -539,6 +559,9 @@ class FFmpegService:
         self, options: ReplacementOptions, visual_probe: dict[str, Any], audio_probe: dict[str, Any],
     ) -> tuple[float, float]:
         """計算合成時間軸與切頭尾後的輸出長度"""
+        if options.timeline is not None:
+            duration = max(0.0, options.timeline.output_out - options.timeline.output_in)
+            return options.timeline.output_out, duration
         still = self._is_still_image(options.visual_path, visual_probe)
         durations = []
         if not still:
@@ -564,6 +587,11 @@ class FFmpegService:
         """回傳畫面、音訊是否可 copy 與可顯示的處理摘要"""
         conversion, target = options.conversion, options.conversion.target_format.lower().lstrip(".")
         base_duration, output_duration = self._replacement_duration(options, visual_probe, audio_probe)
+        if options.timeline is not None:
+            encoder = self.resolve_video_encoder(conversion)[0]
+            audio_encoder = conversion.audio_codec
+            if audio_encoder == "auto": audio_encoder = "pcm_s24le" if encoder == "prores_ks" else self.SOFTWARE_CODECS[target][1]
+            return False, False, f"Video: {encoder}; Audio: {audio_encoder}; Duration: {output_duration:.3f}s"
         visual_duration = self._stream_duration(visual_probe, "video")
         audio_duration = self._stream_duration(audio_probe, "audio")
         still = self._is_still_image(options.visual_path, visual_probe)
@@ -601,6 +629,8 @@ class FFmpegService:
         """驗證替換素材、時間軸與輸出設定"""
         conversion = options.conversion
         if not options.visual_path or not options.audio_path: return "Choose both a visual source and an audio source"
+        output_name_error = self.validate_output_name(options.output_name)
+        if output_name_error: return output_name_error
         if not self.has_media_stream(visual_probe, "video"): return "The visual source does not contain a video stream"
         if not self.has_media_stream(audio_probe, "audio"): return "The audio source does not contain an audio stream"
         if options.duration_mode not in {"longest", "shortest", "custom"}: return "Unsupported duration mode"
@@ -610,12 +640,168 @@ class FFmpegService:
         if options.fit_mode not in {"contain", "cover"}: return "Unsupported image fit mode"
         error = self.validate_options(conversion)
         if error: return error
+        if options.timeline is not None:
+            timeline = options.timeline
+            if timeline.output_out <= timeline.output_in: return "The output range must have a positive duration"
+            for name, timing, probe, media_type in (
+                ("visual", timeline.visual, visual_probe, "video"),
+                ("audio", timeline.audio, audio_probe, "audio"),
+            ):
+                if timing.timeline_duration <= 0: return f"The {name} clip must have a positive duration"
+                if timing.source_out is not None and timing.source_out <= timing.source_in:
+                    return f"The {name} source range must have a positive duration"
+                if name == "visual" and not self._is_still_image(options.visual_path, probe):
+                    minimum = 1 / self._stream_rate(probe, "video")
+                    if timing.timeline_duration + 0.0001 < minimum:
+                        return "The visual clip must contain at least one frame"
+                source_duration = self._stream_duration(probe, media_type)
+                if source_duration is not None and timing.source_out is not None and timing.source_out > source_duration + 0.02:
+                    return f"The {name} source range exceeds the file duration"
+            if conversion.audio_codec == "copy": return "Audio Stream Copy cannot be used with timeline editing"
+            return ""
         _base_duration, output_duration = self._replacement_duration(options, visual_probe, audio_probe)
         if output_duration <= 0: return "The head and tail cuts remove the entire output"
         copy_video, copy_audio, _summary = self.replacement_actions(options, visual_probe, audio_probe)
         if conversion.audio_codec == "copy" and not copy_audio:
             return "Audio Stream Copy cannot be used when the audio timeline or format must be changed"
         return ""
+
+    @staticmethod
+    def _stream_rate(probe: dict[str, Any], media_type: str) -> float:
+        """取得 loop filter 需要的 video frame rate 或 audio sample rate"""
+        stream = FFmpegService._first_stream(probe, media_type)
+        if media_type == "audio": return max(1.0, _number(stream.get("sample_rate")) or 48000.0)
+        value = str(stream.get("avg_frame_rate") or stream.get("r_frame_rate") or "30")
+        try:
+            numerator, denominator = value.split("/", 1)
+            return max(1.0, float(numerator) / max(1.0, float(denominator)))
+        except (TypeError, ValueError):
+            return max(1.0, _number(value) or 30.0)
+
+    @staticmethod
+    def _loop_origin(timing: ReplacementClipTiming) -> float:
+        """將主 block 的循環起點往前延伸到 timeline 0 之前"""
+        duration = max(0.001, timing.timeline_duration)
+        repeats = int(timing.timeline_start // duration) + 1
+        return timing.timeline_start - repeats * duration
+
+    def _timeline_geometry_filters(
+        self, options: ReplacementOptions, probe: dict[str, Any], preview: bool = False,
+    ) -> list[str]:
+        """建立正式輸出與 preview 共用的畫面尺寸 filter"""
+        conversion, filters = options.conversion, []
+        height = conversion.resolution_height
+        if options.aspect_ratio == "source":
+            if height is not None:
+                height_expr = str(height) if conversion.allow_upscale else f"min(ih\\,{height})"
+                filters.append(f"scale=-2:{height_expr}")
+        else:
+            ratio_width, ratio_height = (int(value) for value in options.aspect_ratio.split(":"))
+            height_expr = str(height) if height is not None else "trunc(ih/2)*2"
+            if height is not None and not conversion.allow_upscale: height_expr = f"trunc(min(ih\\,{height})/2)*2"
+            width_expr = f"trunc(({height_expr})*{ratio_width}/{ratio_height}/2)*2"
+            behavior = "decrease" if options.fit_mode == "contain" else "increase"
+            filters.append(f"scale={width_expr}:{height_expr}:force_original_aspect_ratio={behavior}")
+            filters.append(
+                f"pad={width_expr}:{height_expr}:(ow-iw)/2:(oh-ih)/2:black"
+                if options.fit_mode == "contain" else f"crop={width_expr}:{height_expr}"
+            )
+        if preview:
+            filters.append("scale=w='min(960,iw)':h='min(540,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2")
+        return filters
+
+    def _timeline_video_filter(
+        self, options: ReplacementOptions, probe: dict[str, Any], preview: bool = False,
+    ) -> str:
+        """建立畫面 clip、雙向 loop 與 output 工作區 filter"""
+        timeline, timing = options.timeline, options.timeline.visual
+        output_duration = timeline.output_out - timeline.output_in
+        filters = [f"trim=start={timing.source_in:g}:duration={timing.timeline_duration:g}"]
+        filters += self._timeline_geometry_filters(options, probe, preview)
+        if timing.loop and not self._is_still_image(options.visual_path, probe):
+            frame_count = max(1, round(timing.timeline_duration * self._stream_rate(probe, "video")))
+            filters += [f"loop=loop=-1:size={frame_count}:start=0", f"setpts=PTS-STARTPTS+{self._loop_origin(timing):g}/TB"]
+            filters += [f"trim=start={timeline.output_in:g}:duration={output_duration:g}", "setpts=PTS-STARTPTS"]
+        else:
+            clip_end = timing.timeline_start + timing.timeline_duration
+            filters += ["setpts=PTS-STARTPTS"]
+            if timing.timeline_start > 0: filters.append(f"tpad=start_duration={timing.timeline_start:g}:start_mode=add:color=black")
+            if timeline.output_out > clip_end:
+                filters.append(f"tpad=stop_duration={timeline.output_out - clip_end:g}:stop_mode=add:color=black")
+            filters += [f"trim=start={timeline.output_in:g}:duration={output_duration:g}", "setpts=PTS-STARTPTS"]
+        fps = options.conversion.fps
+        if preview: filters.append("fps=30")
+        elif fps != "source": filters.append(f"fps={fps}")
+        elif self._is_still_image(options.visual_path, probe): filters.append("fps=30")
+        return ",".join(filters)
+
+    def _timeline_audio_filter(self, options: ReplacementOptions, probe: dict[str, Any]) -> str:
+        """建立音訊 clip、雙向 loop 與 output 工作區 filter"""
+        timeline, timing = options.timeline, options.timeline.audio
+        output_duration = timeline.output_out - timeline.output_in
+        filters = [f"atrim=start={timing.source_in:g}:duration={timing.timeline_duration:g}"]
+        if timing.loop:
+            sample_count = max(1, round(timing.timeline_duration * self._stream_rate(probe, "audio")))
+            filters += [f"aloop=loop=-1:size={sample_count}:start=0", f"asetpts=PTS-STARTPTS+{self._loop_origin(timing):g}/TB"]
+            filters += [f"atrim=start={timeline.output_in:g}:duration={output_duration:g}", "asetpts=PTS-STARTPTS"]
+        else:
+            filters += ["asetpts=PTS-STARTPTS"]
+            if timing.timeline_start > 0: filters.append(f"adelay={round(timing.timeline_start * 1000)}:all=1")
+            filters += [f"apad=whole_dur={timeline.output_out:g}"]
+            filters += [f"atrim=start={timeline.output_in:g}:duration={output_duration:g}", "asetpts=PTS-STARTPTS"]
+        return ",".join(filters)
+
+    def _build_timeline_replacement_command(
+        self, options: ReplacementOptions, visual_probe: dict[str, Any], audio_probe: dict[str, Any],
+        output: Path | None, pass_number: int | None = None, passlog_path: str | Path | None = None,
+        preview: bool = False,
+    ) -> list[str]:
+        """建立新版雙軌時間軸輸出 command"""
+        output_duration = options.timeline.output_out - options.timeline.output_in
+        command = [self.ffmpeg_path, "-hide_banner", "-nostdin"]
+        if self._is_still_image(options.visual_path, visual_probe): command += ["-loop", "1"]
+        elif Path(options.visual_path).suffix.lower() == ".gif": command += ["-ignore_loop", "1"]
+        memory_preview = preview and output is None
+        progress_pipe = "pipe:2" if memory_preview else "pipe:1"
+        command += ["-i", options.visual_path, "-i", options.audio_path, "-progress", progress_pipe, "-nostats"]
+        filters = [f"[0:v:0]{self._timeline_video_filter(options, visual_probe, preview)}[v]"]
+        maps = ["-map", "[v]"]
+        if pass_number != 1:
+            filters.append(f"[1:a:0]{self._timeline_audio_filter(options, audio_probe)}[a]")
+            maps += ["-map", "[a]"]
+        command += ["-filter_complex", ";".join(filters)] + maps
+        if preview:
+            command += [
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
+                "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
+            ]
+            command += ["-c:a", "aac", "-b:a", "96k"]
+            command += ["-movflags", "frag_keyframe+empty_moov+default_base_moof"] if memory_preview else ["-movflags", "+faststart"]
+        else:
+            encoder, _reason = self.resolve_video_encoder(options.conversion)
+            command += ["-c:v", encoder] + self._video_arguments(options.conversion, encoder)
+            if encoder in {"libx264", *self.HARDWARE_ENCODERS.values()} and options.conversion.pixel_format == "auto":
+                command += ["-pix_fmt", "yuv420p"]
+            command += ["-an"] if pass_number == 1 else self._audio_arguments(
+                options.conversion, options.conversion.target_format.lower().lstrip("."), encoder,
+            )
+        command += ["-t", f"{output_duration:g}"]
+        if pass_number is not None: command += ["-pass", str(pass_number), "-passlogfile", str(passlog_path)]
+        if pass_number == 1: return command + ["-f", "null", "-y", os.devnull]
+        if memory_preview: return command + ["-f", "mp4", "pipe:1"]
+        return command + ["-y" if preview else "-n", str(output)]
+
+    def build_preview_command(
+        self, options: ReplacementOptions, visual_probe: dict[str, Any], audio_probe: dict[str, Any],
+        output: str | Path | None = None,
+    ) -> list[str]:
+        """建立固定低解析度 H.264/AAC preview command, output 為 None 時寫入 stdout"""
+        if options.timeline is None: raise ValueError("Preview requires timeline editing data")
+        error = self.validate_replacement(options, visual_probe, audio_probe)
+        if error: raise ValueError(error)
+        return self._build_timeline_replacement_command(
+            options, visual_probe, audio_probe, Path(output) if output is not None else None, preview=True,
+        )
 
     def _replacement_video_filter(
         self, options: ReplacementOptions, probe: dict[str, Any], base_duration: float, output_duration: float,
@@ -677,8 +863,12 @@ class FFmpegService:
         if error: raise ValueError(error)
         conversion, target = options.conversion, options.conversion.target_format.lower().lstrip(".")
         output = Path(output_path) if output_path else self.collision_safe_output(
-            options.visual_path, conversion.output_dir, target,
+            options.visual_path, conversion.output_dir, target, options.output_name,
         )
+        if options.timeline is not None:
+            return self._build_timeline_replacement_command(
+                options, visual_probe, audio_probe, output, pass_number, passlog_path,
+            )
         base_duration, output_duration = self._replacement_duration(options, visual_probe, audio_probe)
         copy_video, copy_audio, _summary = self.replacement_actions(options, visual_probe, audio_probe)
         command = [self.ffmpeg_path, "-hide_banner", "-nostdin"]
@@ -735,7 +925,7 @@ class FFmpegService:
         if error: raise FFmpegError(error)
         _base_duration, output_duration = self._replacement_duration(options, visual_probe, audio_probe)
         output_path = self.collision_safe_output(
-            options.visual_path, options.conversion.output_dir, options.conversion.target_format,
+            options.visual_path, options.conversion.output_dir, options.conversion.target_format, options.output_name,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         copy_video, copy_audio, summary = self.replacement_actions(options, visual_probe, audio_probe)
@@ -898,6 +1088,69 @@ class FFmpegService:
         if return_code != 0:
             detail = "\n".join(errors[-12:]) or f"FFmpeg exited with code {return_code}"
             raise FFmpegError(detail)
+
+    def execute_preview_to_memory(
+        self, command: list[str], duration: float, progress_cb: ProgressCallback,
+        log_cb: LogCallback, cancel_event: threading.Event, maximum_bytes: int,
+    ) -> bytes:
+        """執行短 preview command, 同時讀取 media stdout 與 progress stderr"""
+        log_cb(" ".join(f'"{part}"' if " " in part else part for part in command))
+        process = self.popen_factory(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=0, **self._window_flags(),
+        )
+        media = bytearray()
+        errors: list[str] = []
+        overflow = threading.Event()
+
+        def read_media() -> None:
+            if process.stdout is None: return
+            while chunk := process.stdout.read(65536):
+                if len(media) + len(chunk) > maximum_bytes:
+                    overflow.set()
+                    return
+                media.extend(chunk)
+
+        def read_progress() -> None:
+            if process.stderr is None: return
+            for raw_line in iter(process.stderr.readline, b""):
+                text = raw_line.decode("utf-8", errors="replace").rstrip()
+                if not text: continue
+                progress = self._parse_progress(text, duration)
+                if progress is not None: _notify_progress(progress_cb, progress, text)
+                elif "=" not in text:
+                    log_cb(text)
+                    errors.append(text)
+                    if len(errors) > 80: errors.pop(0)
+
+        readers = [
+            threading.Thread(target=read_media, daemon=True),
+            threading.Thread(target=read_progress, daemon=True),
+        ]
+        for reader in readers: reader.start()
+        try:
+            while process.poll() is None:
+                if cancel_event.is_set():
+                    self._stop_process(process)
+                    raise ServiceCancelled("Preview cancelled")
+                if overflow.is_set():
+                    self._stop_process(process)
+                    raise FFmpegError(f"Preview exceeded the {maximum_bytes // 1024 // 1024} MiB memory limit")
+                cancel_event.wait(0.05)
+            for reader in readers: reader.join(timeout=2)
+        except (ServiceCancelled, FFmpegError):
+            raise
+        except Exception:
+            if process.poll() is None: self._stop_process(process)
+            raise
+        if cancel_event.is_set(): raise ServiceCancelled("Preview cancelled")
+        if overflow.is_set():
+            raise FFmpegError(f"Preview exceeded the {maximum_bytes // 1024 // 1024} MiB memory limit")
+        if process.returncode != 0:
+            detail = "\n".join(errors[-12:]) or f"FFmpeg exited with code {process.returncode}"
+            raise FFmpegError(detail)
+        if not media: raise FFmpegError("FFmpeg returned an empty preview")
+        return bytes(media)
 
     def _validate_audio_copy(self, probe: dict[str, Any], target: str) -> tuple[bool, str]:
         """只檢查 audio stream 是否能直接封裝到輸出 container"""

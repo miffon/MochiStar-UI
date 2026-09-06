@@ -11,7 +11,9 @@ from models import (
     DownloadOptions,
     FormatInfo,
     MediaInfo,
+    ReplacementClipTiming,
     ReplacementOptions,
+    ReplacementTimeline,
     SubtitleOptions,
     SubtitleSelection,
     SubtitleTrack,
@@ -88,9 +90,15 @@ def test_conversion_task_infers_kind_and_defaults_are_not_shared() -> None:
 
 def test_replacement_task_round_trip_keeps_complete_timeline_snapshot() -> None:
     options = ReplacementOptions(
-        visual_path="picture.gif", audio_path="music.wav", duration_mode="custom", custom_duration=12.5,
+        visual_path="picture.gif", audio_path="music.wav", output_name="aligned-cut",
+        duration_mode="custom", custom_duration=12.5,
         visual_loop=True, audio_loop=True, visual_delay=0.25, audio_delay=-0.5,
         trim_start=1.25, trim_end=0.75, aspect_ratio="9:16", fit_mode="cover", force_reencode=True,
+        timeline=ReplacementTimeline(
+            visual=ReplacementClipTiming(0.5, 4.5, 1.0, 4.0, True),
+            audio=ReplacementClipTiming(1.0, 8.0, 0.25, 7.0, False),
+            output_in=0.5, output_out=10.5,
+        ),
         conversion=ConversionOptions(
             output_dir="output", target_format="mov", video_codec="prores", prores_profile="hq",
             audio_codec="pcm_s24le", audio_sample_rate=48000,
@@ -103,6 +111,16 @@ def test_replacement_task_round_trip_keeps_complete_timeline_snapshot() -> None:
     assert restored.kind is TaskKind.REPLACEMENT
     assert restored.replacement_options == options
     assert restored.payload == options
+
+
+def test_replacement_legacy_payload_keeps_timeline_disabled() -> None:
+    options = ReplacementOptions.from_dict({
+        "visual_path": "clip.mp4", "audio_path": "music.wav",
+        "visual_delay": -0.5, "audio_delay": 1.25, "trim_start": 2,
+    })
+
+    assert options.timeline is None
+    assert options.visual_delay == -0.5 and options.audio_delay == 1.25
 
 
 def test_from_dict_is_robust_to_invalid_and_legacy_values() -> None:

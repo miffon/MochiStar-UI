@@ -1,6 +1,8 @@
 import logging
 from datetime import date, timedelta
 
+from PySide6.QtCore import qInfo
+
 from logging_bridge import LOG_RETENTION_COUNT, QtLogBridge, _prune_log_files, _StreamProxy
 
 
@@ -44,6 +46,20 @@ def test_log_bridge_sends_formatted_messages_with_original_level(tmp_path):
     assert [level for _message, level in messages] == [logging.WARNING, logging.ERROR]
     assert "| WARNING | level-test | careful" in messages[0][0]
     assert "| ERROR | level-test | failed" in messages[1][0]
+
+
+def test_log_bridge_routes_qt_messages_to_ui_signal(tmp_path):
+    bridge = QtLogBridge(tmp_path)
+    messages = []
+    bridge.message.connect(lambda message, level: messages.append((message, level)))
+    bridge.install()
+    try:
+        qInfo("Qt multimedia backend ready")
+    finally:
+        bridge.restore_streams()
+
+    assert messages[-1][1] == logging.INFO
+    assert "| INFO | default | Qt multimedia backend ready" in messages[-1][0]
 
 
 def test_log_bridge_does_not_create_file_without_errors(tmp_path):

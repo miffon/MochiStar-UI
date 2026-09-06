@@ -16,7 +16,9 @@ from models import (
     CookieConfig,
     ConversionOptions,
     DownloadOptions,
+    ReplacementClipTiming,
     ReplacementOptions,
+    ReplacementTimeline,
     SubtitleOptions,
     SubtitleSelection,
     TaskKind,
@@ -538,6 +540,82 @@ def test_replacement_duration_uses_selected_stream_instead_of_other_tracks() -> 
     assert service._replacement_duration(options, visual, audio) == (8.0, 8.0)
 
 
+def test_timeline_replacement_builds_clip_ranges_bidirectional_loops_and_output_range() -> None:
+    service = make_ffmpeg_service()
+    visual = {
+        "duration": 8.0,
+        "streams": [{"codec_type": "video", "codec_name": "h264", "duration": "8", "avg_frame_rate": "30/1"}],
+    }
+    audio = {
+        "duration": 12.0,
+        "streams": [{"codec_type": "audio", "codec_name": "aac", "duration": "12", "sample_rate": "48000"}],
+    }
+    timeline = ReplacementTimeline(
+        visual=ReplacementClipTiming(1, 4, 2, 3, True),
+        audio=ReplacementClipTiming(0.5, 5.5, 1, 5, True),
+        output_in=0.75, output_out=9.25,
+    )
+    options = ReplacementOptions(
+        visual_path="clip.mp4", audio_path="music.m4a", timeline=timeline,
+        conversion=ConversionOptions(output_dir="output", target_format="mp4", acceleration="cpu"),
+    )
+
+    command = service.build_replacement_command(options, visual, audio, TEST_PATH / "timeline.mp4")
+    filters = command[command.index("-filter_complex") + 1]
+
+    assert "trim=start=1:duration=3" in filters
+    assert "loop=loop=-1:size=90:start=0" in filters
+    assert "atrim=start=0.5:duration=5" in filters
+    assert "aloop=loop=-1:size=240000:start=0" in filters
+    assert "trim=start=0.75:duration=8.5" in filters
+    assert command[command.index("-t") + 1] == "8.5"
+    assert "copy" not in command
+
+
+def test_timeline_preview_uses_fixed_cross_platform_proxy_format() -> None:
+    service = make_ffmpeg_service()
+    visual = {"duration": 3.0, "streams": [{"codec_type": "video", "codec_name": "h264", "duration": "3"}]}
+    audio = {"duration": 3.0, "streams": [{"codec_type": "audio", "codec_name": "aac", "duration": "3"}]}
+    timing = ReplacementClipTiming(0, 3, 0, 3)
+    options = ReplacementOptions(
+        visual_path="clip.mp4", audio_path="music.m4a",
+        timeline=ReplacementTimeline(timing, ReplacementClipTiming.from_dict(timing.to_dict()), 0, 3),
+    )
+
+    command = service.build_preview_command(options, visual, audio, TEST_PATH / "preview.mp4")
+
+    assert command[command.index("-c:v") + 1] == "libx264"
+    assert command[command.index("-c:a") + 1] == "aac"
+    assert "yuv420p" in command and "+faststart" in command
+    assert command[command.index("-g") + 1] == "30"
+    assert command[command.index("-keyint_min") + 1] == "30"
+    assert command[command.index("-sc_threshold") + 1] == "0"
+    assert command[-2:] == ["-y", str(TEST_PATH / "preview.mp4")]
+
+    memory_command = service.build_preview_command(options, visual, audio)
+    assert memory_command[memory_command.index("-progress") + 1] == "pipe:2"
+    assert "frag_keyframe+empty_moov+default_base_moof" in memory_command
+    assert memory_command[-3:] == ["-f", "mp4", "pipe:1"]
+
+
+def test_timeline_rejects_visual_clip_shorter_than_one_frame() -> None:
+    service = make_ffmpeg_service()
+    visual = {
+        "duration": 5.0,
+        "streams": [{"codec_type": "video", "duration": "5", "avg_frame_rate": "24/1"}],
+    }
+    audio = {"duration": 5.0, "streams": [{"codec_type": "audio", "duration": "5"}]}
+    options = ReplacementOptions(
+        visual_path="clip.mp4", audio_path="music.wav",
+        timeline=ReplacementTimeline(
+            ReplacementClipTiming(0, 0.02, 0, 0.02), ReplacementClipTiming(0, 5, 0, 5), 0, 5,
+        ),
+        conversion=ConversionOptions(target_format="mp4", acceleration="cpu"),
+    )
+
+    assert service.validate_replacement(options, visual, audio) == "The visual clip must contain at least one frame"
+
+
 def test_h264_bitrate_modes_map_cbr_vbr_and_two_pass_arguments() -> None:
     service = make_ffmpeg_service()
     output = TEST_PATH / "output.mp4"
@@ -665,8 +743,12 @@ def test_collision_safe_output_never_overwrites_source_or_existing_file(tmp_path
     (tmp_path / "clip (1).mp4").touch()
 
     output = service.collision_safe_output(source, tmp_path, "mp4")
+    custom = service.collision_safe_output(source, tmp_path, "mp4", "Aligned Cut.mp4")
 
     assert output.name == "clip (2).mp4"
+    assert custom.name == "Aligned Cut.mp4"
+    assert service.validate_output_name("../outside")
+    assert service.validate_output_name("CON")
 
 
 class FakeProcess:
@@ -689,6 +771,52 @@ class FakeProcess:
 
     def kill(self) -> None:
         self.returncode = 1
+
+
+class FakePreviewProcess:
+    def __init__(self, media: bytes = b"preview-data"):
+        self.stdout = io.BytesIO(media)
+        self.stderr = io.BytesIO(b"out_time_us=500000\nprogress=continue\nprogress=end\n")
+        self.returncode = 0
+        self.terminated = False
+
+    def poll(self) -> int:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 1
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = 1
+
+
+def test_execute_preview_reads_media_and_progress_from_separate_pipes() -> None:
+    process = FakePreviewProcess()
+    service = make_ffmpeg_service(popen_factory=lambda *_args, **_kwargs: process)
+    progress: list[float] = []
+
+    data = service.execute_preview_to_memory(
+        ["ffmpeg"], 1, lambda value, _detail: progress.append(value),
+        lambda _message: None, threading.Event(), 1024,
+    )
+
+    assert data == b"preview-data"
+    assert 0.5 in progress and progress[-1] == 1.0
+
+
+def test_execute_preview_rejects_data_over_memory_limit() -> None:
+    process = FakePreviewProcess(b"too-large")
+    service = make_ffmpeg_service(popen_factory=lambda *_args, **_kwargs: process)
+
+    with pytest.raises(FFmpegError, match="0 MiB memory limit"):
+        service.execute_preview_to_memory(
+            ["ffmpeg"], 1, lambda *_args: None, lambda _message: None,
+            threading.Event(), 3,
+        )
 
 
 def test_execute_conversion_parses_progress_without_real_subprocess(tmp_path: Path) -> None:

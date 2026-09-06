@@ -10,12 +10,12 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    Property, QAbstractTableModel, QEvent, QModelIndex, QObject, QPoint, QRect, QSize, QSortFilterProxyModel,
+    QAbstractTableModel, QEvent, QModelIndex, QObject, QPoint, QRect, QSize, QSortFilterProxyModel,
     QTimer, Qt, Signal,
 )
 from PySide6.QtGui import (
     QColor, QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFontDatabase,
-    QPaintEvent, QPainter, QPen, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor, QWheelEvent,
+    QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor, QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,12 +30,12 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -51,8 +51,13 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import tr
-from models import ConversionPreset, FormatInfo, MediaInfo, SubtitleTrack, TaskKind, TaskRecord, TaskStatus
+from models import (
+    ConversionPreset, FormatInfo, MediaInfo, SubtitleTrack,
+    TaskKind, TaskRecord, TaskStatus,
+)
+from replacement_editor import ReplacementEditor
 from theme import theme_color
+from ui_widgets import RoundedProgressBar
 
 
 class NoWheelComboBox(QComboBox):
@@ -106,6 +111,20 @@ class NoWheelComboBox(QComboBox):
         if actual_rect.intersects(combo_rect):
             target_y = combo_rect.bottom() + 2 if place_below else combo_rect.top() - actual_rect.height() - 1
             popup.move(popup.x(), popup.y() + target_y - actual_rect.top())
+
+
+class NoWheelSpinBox(QSpinBox):
+    """忽略滑鼠滾輪, 避免誤改數值"""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """忽略滑鼠滾輪, 避免誤改數值"""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
 
 
 class FileDropListWidget(QListWidget):
@@ -165,9 +184,22 @@ class FileDropListWidget(QListWidget):
 def _add_option_row(
     layout: QFormLayout, title: str, field: QWidget | QHBoxLayout | QGridLayout, tooltip: str = "",
 ) -> QLabel:
-    """加入帶說明 tooltip 的設定標題"""
+    """加入設定標題並讓整列共用已有的 tooltip"""
+    def apply_tooltip(target: QWidget | QLayout) -> None:
+        if isinstance(target, QWidget):
+            if not target.toolTip(): target.setToolTip(tooltip)
+            for child in target.findChildren(QWidget):
+                if not child.toolTip(): child.setToolTip(tooltip)
+            return
+        for index in range(target.count()):
+            item = target.itemAt(index)
+            if item.widget() is not None: apply_tooltip(item.widget())
+            elif item.layout() is not None: apply_tooltip(item.layout())
+
     label = QLabel(title)
-    if tooltip: label.setToolTip(tooltip)
+    if tooltip:
+        label.setToolTip(tooltip)
+        apply_tooltip(field)
     if isinstance(field, QWidget):
         label.setBuddy(field)
         layout.addRow(label, field)
@@ -395,64 +427,6 @@ def _set_table_column_widths(table: QTableView, widths: Sequence[int], minimum: 
         table._width_controller.use_default_widths() # type: ignore[attr-defined]
         return
     table._width_controller.apply_saved_widths(values) # type: ignore[attr-defined]
-
-
-class RoundedProgressBar(QProgressBar):
-    """繪製不受 native style 影響的圓角 progress"""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._track_color = QColor("#1a2532")
-        self._chunk_color = QColor("#5b8cff")
-        self._border_color = QColor("#2a394b")
-
-    @Property(QColor)
-    def trackColor(self) -> QColor:
-        return self._track_color
-
-    @trackColor.setter
-    def trackColor(self, color: QColor) -> None:
-        self._track_color = color
-
-    @Property(QColor)
-    def chunkColor(self) -> QColor:
-        return self._chunk_color
-
-    @chunkColor.setter
-    def chunkColor(self, color: QColor) -> None:
-        self._chunk_color = color
-
-    @Property(QColor)
-    def borderColor(self) -> QColor:
-        return self._border_color
-
-    @borderColor.setter
-    def borderColor(self, color: QColor) -> None:
-        self._border_color = color
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        """繪製 determinate progress, indeterminate 保留 Qt 原生動畫"""
-        if self.minimum() == self.maximum():
-            super().paintEvent(event)
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        outer = self.rect().toRectF().adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = outer.height() / 2
-        painter.setPen(QPen(self._border_color, 1))
-        painter.setBrush(self._track_color)
-        painter.drawRoundedRect(outer, radius, radius)
-
-        span = self.maximum() - self.minimum()
-        ratio = max(0.0, min(1.0, (self.value() - self.minimum()) / span)) if span else 0.0
-        if ratio <= 0: return
-        inner = outer.adjusted(1, 1, -1, -1)
-        inner.setWidth(inner.width() * ratio)
-        chunk_radius = min(inner.width(), inner.height()) / 2
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._chunk_color)
-        painter.drawRoundedRect(inner, chunk_radius, chunk_radius)
 
 
 def _enum_text(value: Any) -> str:
@@ -1849,7 +1823,7 @@ class ConversionPanel(QWidget):
         self.resolution_combo.addItem("Source", None)
         for height in (2160, 1440, 1080, 720, 480): self.resolution_combo.addItem(f"{height}p", height)
         self.resolution_combo.addItem("Custom", "custom")
-        self.resolution_spin = QSpinBox()
+        self.resolution_spin = NoWheelSpinBox()
         self.resolution_spin.setRange(2, 8192)
         self.resolution_spin.setSingleStep(2)
         self.resolution_spin.setValue(1080)
@@ -1868,7 +1842,7 @@ class ConversionPanel(QWidget):
             ("60", "60"), ("Custom", "custom"),
         ):
             self.fps_combo.addItem(label, value)
-        self.fps_spin = QDoubleSpinBox()
+        self.fps_spin = NoWheelDoubleSpinBox()
         self.fps_spin.setRange(1, 240)
         self.fps_spin.setDecimals(3)
         self.fps_spin.setValue(30)
@@ -1881,10 +1855,10 @@ class ConversionPanel(QWidget):
         ):
             self.quality_mode_combo.addItem(label, value)
         self.quality_mode_combo.setCurrentIndex(self.quality_mode_combo.findData("vbr"))
-        self.quality_value_spin = QDoubleSpinBox()
+        self.quality_value_spin = NoWheelDoubleSpinBox()
         self.quality_value_spin.setDecimals(3)
         self.quality_value_spin.setValue(7.5)
-        self.maximum_bitrate_spin = QDoubleSpinBox()
+        self.maximum_bitrate_spin = NoWheelDoubleSpinBox()
         self.maximum_bitrate_spin.setDecimals(3)
         self.maximum_bitrate_spin.setSingleStep(0.1)
         self.maximum_bitrate_spin.setRange(0.001, 1000)
@@ -1910,7 +1884,7 @@ class ConversionPanel(QWidget):
         self.audio_bitrate_combo.addItem("Auto", None)
         for bitrate in (128, 192, 256, 320): self.audio_bitrate_combo.addItem(f"{bitrate} kbps", bitrate)
         self.audio_bitrate_combo.addItem("Custom", "custom")
-        self.audio_bitrate_spin = QSpinBox()
+        self.audio_bitrate_spin = NoWheelSpinBox()
         self.audio_bitrate_spin.setRange(8, 1536)
         self.audio_bitrate_spin.setValue(320)
         self.audio_bitrate_spin.setSuffix(" kbps")
@@ -1924,7 +1898,7 @@ class ConversionPanel(QWidget):
         self.audio_quality_combo.addItem("Auto", None)
         for bitrate in (128, 192, 256, 320): self.audio_quality_combo.addItem(f"{bitrate} kbps", bitrate)
         self.audio_quality_combo.addItem("Custom", "custom")
-        self.audio_quality_spin = QSpinBox()
+        self.audio_quality_spin = NoWheelSpinBox()
         self.audio_quality_spin.setRange(8, 1536)
         self.audio_quality_spin.setValue(192)
         self.audio_quality_spin.setSuffix(" kbps")
@@ -1937,6 +1911,7 @@ class ConversionPanel(QWidget):
         self.validation_label = QLabel()
         self.validation_label.setWordWrap(True)
         self.validation_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.validation_label.hide()
         self.add_button = QPushButton("Add to Queue")
         self.add_button.setEnabled(False)
         _set_role("primary", self.add_button)
@@ -2121,7 +2096,7 @@ class ConversionPanel(QWidget):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(self.advanced_container)
-        self.splitter.setHandleWidth(1)
+        self.splitter.setHandleWidth(5)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self._splitter_ratio = 0.5
@@ -2565,6 +2540,7 @@ class ConversionPanel(QWidget):
     def set_request_error(self, message: str) -> None:
         """顯示 remux 或輸入驗證錯誤"""
         self.validation_label.setText(message)
+        self.validation_label.setVisible(bool(message))
         self._refresh_add_button()
 
     def _files_did_change(self) -> None:
@@ -2798,7 +2774,7 @@ class _ReplacementSourceCard(QFrame):
         self.summary_label.setWordWrap(True)
         self.summary_label.setProperty("role", "muted")
         self.loop_checkbox = QCheckBox("Loop")
-        self.delay_spin = QDoubleSpinBox()
+        self.delay_spin = NoWheelDoubleSpinBox()
         self.delay_spin.setRange(-86400, 86400)
         self.delay_spin.setDecimals(3)
         self.delay_spin.setSingleStep(0.1)
@@ -2882,6 +2858,8 @@ class ReplacementPanel(ConversionPanel):
     browse_visual_requested = Signal()
     browse_audio_requested = Signal()
     sources_changed = Signal(list)
+    source_asset_requested = Signal(str, str, object)
+    preview_requested = Signal(float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2897,12 +2875,8 @@ class ReplacementPanel(ConversionPanel):
 
         self.visual_card = _ReplacementSourceCard("Visual", "video")
         self.audio_card = _ReplacementSourceCard("Audio", "audio")
-        source_widget = QWidget()
-        source_layout = QVBoxLayout(source_widget)
-        source_layout.setContentsMargins(0, 0, 5, 0)
-        source_layout.setSpacing(8)
-        source_layout.addWidget(self.visual_card, 1)
-        source_layout.addWidget(self.audio_card, 1)
+        self.editor = ReplacementEditor()
+        source_widget = self.editor
         old_widget = self.splitter.widget(0)
         old_widget.setParent(None)
         self._source_widget = source_widget
@@ -2921,8 +2895,8 @@ class ReplacementPanel(ConversionPanel):
         self.fit_mode_combo = NoWheelComboBox()
         self.fit_mode_combo.addItem("Fit with Black Bars", "contain")
         self.fit_mode_combo.addItem("Fill and Crop", "cover")
-        self.trim_start_spin = QDoubleSpinBox()
-        self.trim_end_spin = QDoubleSpinBox()
+        self.trim_start_spin = NoWheelDoubleSpinBox()
+        self.trim_end_spin = NoWheelDoubleSpinBox()
         for spin in (self.trim_start_spin, self.trim_end_spin):
             spin.setRange(0, 86400)
             spin.setDecimals(3)
@@ -2932,10 +2906,34 @@ class ReplacementPanel(ConversionPanel):
         self.force_reencode_checkbox.setToolTip(
             "Encode both video and audio even when compatible streams could be copied"
         )
+        self.preview_memory_spin = NoWheelSpinBox()
+        self.preview_memory_spin.setRange(16, 4096)
+        self.preview_memory_spin.setSuffix(" MiB")
+        self.preview_memory_spin.setValue(256)
+        self.preview_memory_spin.setToolTip("Maximum RAM used by completed preview segments")
+        self.preview_memory_spin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.preview_block_limit_spin = NoWheelSpinBox()
+        self.preview_block_limit_spin.setRange(0, 1000)
+        self.preview_block_limit_spin.setSpecialValueText(tr("Auto"))
+        self.preview_block_limit_spin.setSuffix(f" {tr('Blocks')}")
+        self.preview_block_limit_spin.setToolTip("Maximum retained and active preview blocks, or Auto for the memory limit only")
+        self.preview_block_limit_spin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.preview_segment_spin = NoWheelDoubleSpinBox()
+        self.preview_segment_spin.setRange(1, 86400)
+        self.preview_segment_spin.setDecimals(1)
+        self.preview_segment_spin.setSingleStep(1)
+        self.preview_segment_spin.setSuffix(" s")
+        self.preview_segment_spin.setValue(20)
+        self.preview_segment_spin.setToolTip("Duration of each preview cache segment")
+        self.preview_lead_ratio_spin = NoWheelDoubleSpinBox()
+        self.preview_lead_ratio_spin.setRange(0, 1)
+        self.preview_lead_ratio_spin.setDecimals(2)
+        self.preview_lead_ratio_spin.setSingleStep(0.05)
+        self.preview_lead_ratio_spin.setValue(0.5)
+        self.preview_lead_ratio_spin.setToolTip("Fraction of one cache segment reserved before the playhead")
+        self.output_name_edit = QLineEdit()
+        self.output_name_edit.setPlaceholderText("Leave blank to use the visual source name")
         common_group = QGroupBox("Common Settings")
-        self.processing_summary_label = QLabel()
-        self.processing_summary_label.setWordWrap(True)
-        self.processing_summary_label.setProperty("role", "muted")
         common = QFormLayout(common_group)
         common.setHorizontalSpacing(5)
         common.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -2943,17 +2941,24 @@ class ReplacementPanel(ConversionPanel):
         output_layout.setSpacing(5)
         output_layout.addWidget(self.output_directory_edit, 1)
         output_layout.addWidget(self.output_button)
+        preview_memory_layout = QHBoxLayout()
+        preview_memory_layout.setSpacing(5)
+        preview_memory_layout.addWidget(self.preview_memory_spin, 3)
+        preview_memory_layout.addWidget(self.preview_block_limit_spin, 2)
         _add_option_row(common, "Output Folder", output_layout)
+        _add_option_row(common, "Output File Name", self.output_name_edit)
         _add_option_row(common, "Total Duration", self.duration_mode_combo, "Choose the finished timeline length")
         _add_option_row(common, "Custom Duration", self.custom_duration_edit, "Enter seconds, MM:SS, or HH:MM:SS.mmm")
         _add_option_row(common, "Aspect Ratio", self.aspect_ratio_combo, "Keep the source shape or use a common video canvas")
         _add_option_row(common, "Image Fit", self.fit_mode_combo, "Show the whole image with black bars or crop it to fill the canvas")
         _add_option_row(common, "Cut Head", self.trim_start_spin, "Remove this amount from the beginning of the finished timeline")
         _add_option_row(common, "Cut Tail", self.trim_end_spin, "Remove this amount from the end of the finished timeline")
+        _add_option_row(common, "Preview Memory Limit", preview_memory_layout, self.preview_memory_spin.toolTip())
+        _add_option_row(common, "Preview Cache Segment", self.preview_segment_spin, self.preview_segment_spin.toolTip())
+        _add_option_row(common, "Preview Lead-in Ratio", self.preview_lead_ratio_spin, self.preview_lead_ratio_spin.toolTip())
         common.addRow("", self.force_reencode_checkbox)
-        common.addRow("", self.processing_summary_label)
         common.addRow("", self.validation_label)
-        common.addRow("Acceleration", self.encoder_combo)
+        _add_option_row(common, "Acceleration", self.encoder_combo, "Prefer supported hardware transcoding acceleration")
         video_scroll = self.advanced_stack.widget(0)
         video_group = video_scroll.takeWidget()
         right_content = QWidget()
@@ -2969,6 +2974,10 @@ class ReplacementPanel(ConversionPanel):
         self.settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.settings_scroll.setWidget(right_content)
+        for widget in (self.duration_mode_combo, self.custom_duration_edit, self.trim_start_spin, self.trim_end_spin):
+            label = common.labelForField(widget)
+            if label is not None: label.hide()
+            widget.hide()
         old_advanced = self.splitter.widget(1)
         old_advanced.setParent(None)
         self._unused_advanced_widget = old_advanced
@@ -2986,6 +2995,14 @@ class ReplacementPanel(ConversionPanel):
         self.audio_card.browse_requested.connect(self.browse_audio_requested)
         self.visual_card.source_changed.connect(lambda _path: self._source_changed())
         self.audio_card.source_changed.connect(lambda _path: self._source_changed())
+        self.editor.source_dropped.connect(self._editor_source_dropped)
+        self.editor.source_browse_requested.connect(
+            lambda track: self.browse_visual_requested.emit() if track == "visual" else self.browse_audio_requested.emit()
+        )
+        self.editor.source_clear_requested.connect(self._clear_editor_source)
+        self.editor.timeline_changed.connect(lambda _timeline: self._replacement_changed())
+        self.editor.output_range_changed.connect(lambda _timeline: self._output_range_changed())
+        self.editor.preview_requested.connect(self.preview_requested)
         for widget in (
             self.duration_mode_combo, self.aspect_ratio_combo, self.fit_mode_combo,
         ):
@@ -2999,6 +3016,11 @@ class ReplacementPanel(ConversionPanel):
         self.audio_card.loop_checkbox.toggled.connect(self._replacement_changed)
         self.force_reencode_checkbox.toggled.connect(self._replacement_changed)
         self.custom_duration_edit.textChanged.connect(self._replacement_changed)
+        self.output_name_edit.textChanged.connect(self._output_name_changed)
+        self.preview_memory_spin.valueChanged.connect(self._preview_cache_settings_changed)
+        self.preview_block_limit_spin.valueChanged.connect(self._preview_cache_settings_changed)
+        self.preview_segment_spin.valueChanged.connect(self._preview_cache_settings_changed)
+        self.preview_lead_ratio_spin.valueChanged.connect(self._preview_cache_settings_changed)
         self._replacement_changed()
 
     @staticmethod
@@ -3029,6 +3051,12 @@ class ReplacementPanel(ConversionPanel):
         return f"{int(hours):02d}:{int(minutes):02d}:{value:06.3f}"
 
     def _source_changed(self) -> None:
+        self.editor.timeline.set_source("visual", self.visual_card.path)
+        self.editor.timeline.set_source("audio", self.audio_card.path)
+        self.editor.invalidate_preview_cache()
+        if self.visual_card.path:
+            pixmap = QPixmap(self.visual_card.path)
+            if not pixmap.isNull(): self.editor.preview.set_representative(pixmap)
         paths = [path for path in (self.visual_card.path, self.audio_card.path) if path]
         for path in paths:
             self._source_probes.pop(path, None)
@@ -3040,9 +3068,39 @@ class ReplacementPanel(ConversionPanel):
         if path not in {self.visual_card.path, self.audio_card.path}: return
         if probe is not None: self._source_probes[path] = probe
         if error: self._source_errors[path] = error
-        card = self.visual_card if path == self.visual_card.path else self.audio_card
-        card.set_probe(probe, error)
+        matches = []
+        if path == self.visual_card.path: matches.append(("visual", self.visual_card))
+        if path == self.audio_card.path: matches.append(("audio", self.audio_card))
+        for track, card in matches:
+            card.set_probe(probe, error)
+            if probe is not None:
+                self.editor.timeline.set_source_probe(track, probe)
+                self.source_asset_requested.emit(track, path, probe)
         self._request_validation()
+
+    def set_timeline_asset(self, track: str, source: str, asset_path: str) -> None:
+        """忽略已替換來源的延遲 asset 結果"""
+        if self.editor.timeline.paths.get(track) != source: return
+        pixmap = QPixmap(asset_path)
+        if pixmap.isNull(): return
+        self.editor.timeline.set_asset(track, pixmap)
+        if track == "visual":
+            width = max(1, pixmap.width() // 12)
+            self.editor.preview.set_representative(pixmap.copy(0, 0, width, pixmap.height()))
+
+    def _editor_source_dropped(self, track: str, path: str) -> None:
+        """將時間軸 drop 套用到對應的單一來源"""
+        card = self.visual_card if track == "visual" else self.audio_card
+        if card.path and card.path != path:
+            answer = QMessageBox.question(
+                self, tr("Replace Source"), tr("Replace the current source in this track?"),
+            )
+            if answer != QMessageBox.StandardButton.Yes: return
+        card.set_path(path)
+
+    def _clear_editor_source(self, track: str) -> None:
+        card = self.visual_card if track == "visual" else self.audio_card
+        card.set_path("")
 
     def source_probes(self) -> dict[str, dict[str, Any]]:
         return dict(self._source_probes)
@@ -3050,15 +3108,42 @@ class ReplacementPanel(ConversionPanel):
     def source_errors(self) -> dict[str, str]:
         return dict(self._source_errors)
 
-    def set_processing_summary(self, message: str) -> None:
-        self.processing_summary_label.setText(message)
-
     def _replacement_changed(self, *_args: Any) -> None:
         if not hasattr(self, "duration_mode_combo"): return
+        self.editor.refresh_output_duration()
         custom = self.duration_mode_combo.currentData() == "custom"
         self.custom_duration_edit.setEnabled(custom)
         self.fit_mode_combo.setEnabled(self.aspect_ratio_combo.currentData() != "source")
         self._request_validation()
+        if not self._loading:
+            self.editor.invalidate_preview_cache()
+            self.preview_requested.emit(self.editor.timeline.playhead)
+
+    def _settings_changed(self) -> None:
+        """更新共用輸出設定並讓 RAM preview 失效"""
+        super()._settings_changed()
+        if hasattr(self, "editor") and not self._loading:
+            self.editor.invalidate_preview_cache()
+            self.preview_requested.emit(self.editor.timeline.playhead)
+
+    def _output_range_changed(self) -> None:
+        """更新整體輸出範圍但保留仍可使用的 RAM cache"""
+        self._request_validation()
+        if not self._loading: self.preview_requested.emit(self.editor.timeline.playhead)
+
+    def _preview_cache_settings_changed(self, *_args: Any) -> None:
+        if self._loading: return
+        self.preview_requested.emit(self.editor.timeline.playhead)
+
+    def _output_name_changed(self, _text: str) -> None:
+        if not self._loading: self._request_validation()
+
+    def preview_cache_settings(self) -> tuple[float, float, int, int]:
+        segment_duration = self.preview_segment_spin.value()
+        return (
+            segment_duration, segment_duration * self.preview_lead_ratio_spin.value(),
+            self.preview_memory_spin.value() * 1024 * 1024, self.preview_block_limit_spin.value(),
+        )
 
     def _refresh_add_button(self) -> None:
         if not hasattr(self, "visual_card"):
@@ -3076,6 +3161,7 @@ class ReplacementPanel(ConversionPanel):
         if not hasattr(self, "visual_card"): return payload
         payload.update({
             "visual_path": self.visual_card.path, "audio_path": self.audio_card.path,
+            "output_name": self.output_name_edit.text().strip(),
             "duration_mode": self.duration_mode_combo.currentData(),
             "custom_duration": self.parse_duration(self.custom_duration_edit.text()),
             "visual_loop": self.visual_card.loop_checkbox.isChecked(),
@@ -3085,6 +3171,7 @@ class ReplacementPanel(ConversionPanel):
             "trim_start": self.trim_start_spin.value(), "trim_end": self.trim_end_spin.value(),
             "aspect_ratio": self.aspect_ratio_combo.currentData(), "fit_mode": self.fit_mode_combo.currentData(),
             "force_reencode": self.force_reencode_checkbox.isChecked(),
+            "timeline": self.editor.timeline.timeline().to_dict(),
         })
         payload["input_paths"] = []
         payload["stream_copy"] = False
@@ -3102,9 +3189,18 @@ class ReplacementPanel(ConversionPanel):
 
     def persistent_settings(self) -> dict[str, Any]:
         payload = self.request_payload()
-        for key in ("visual_path", "audio_path", "input_paths", "media_type", "stream_copy"):
+        transient = {
+            "visual_path", "audio_path", "output_name", "input_paths", "media_type", "stream_copy", "timeline",
+            "duration_mode", "custom_duration", "visual_loop", "audio_loop", "visual_delay", "audio_delay",
+            "trim_start", "trim_end",
+        }
+        for key in transient:
             payload.pop(key, None)
         payload["preset_id"] = self.current_preset_id()
+        payload["preview_memory_mib"] = self.preview_memory_spin.value()
+        payload["preview_block_limit"] = self.preview_block_limit_spin.value()
+        payload["preview_segment_duration"] = self.preview_segment_spin.value()
+        payload["preview_lead_ratio"] = self.preview_lead_ratio_spin.value()
         return payload
 
     def restore_settings(self, values: dict[str, Any]) -> None:
@@ -3135,6 +3231,7 @@ class ReplacementPanel(ConversionPanel):
             resolution_index = self.resolution_combo.findData("custom")
             self.resolution_spin.setValue(int(resolution))
         self.resolution_combo.setCurrentIndex(max(0, resolution_index))
+        self.output_name_edit.clear()
         self.custom_duration_edit.setText(self.format_duration(values.get("custom_duration")))
         self.visual_card.loop_checkbox.setChecked(bool(values.get("visual_loop")))
         self.audio_card.loop_checkbox.setChecked(bool(values.get("audio_loop")))
@@ -3143,6 +3240,16 @@ class ReplacementPanel(ConversionPanel):
         self.trim_start_spin.setValue(float(values.get("trim_start") or 0))
         self.trim_end_spin.setValue(float(values.get("trim_end") or 0))
         self.force_reencode_checkbox.setChecked(bool(values.get("force_reencode")))
+        self.preview_memory_spin.setValue(int(values.get("preview_memory_mib", 256)))
+        self.preview_block_limit_spin.setValue(int(values.get("preview_block_limit", 0)))
+        segment_duration = float(values.get(
+            "preview_segment_duration", values.get("preview_extension", values.get("preview_postroll", 20)),
+        ))
+        lead_ratio = values.get("preview_lead_ratio")
+        if lead_ratio is None and values.get("preview_ahead") is not None:
+            lead_ratio = float(values["preview_ahead"]) / max(1, segment_duration)
+        self.preview_segment_spin.setValue(segment_duration)
+        self.preview_lead_ratio_spin.setValue(float(0.5 if lead_ratio is None else lead_ratio))
         self.allow_upscale_checkbox.setChecked(bool(values.get("allow_upscale")))
         if values.get("quality_value") is not None: self.quality_value_spin.setValue(float(values["quality_value"]))
         if values.get("maximum_bitrate") is not None: self.maximum_bitrate_spin.setValue(float(values["maximum_bitrate"]))

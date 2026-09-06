@@ -255,11 +255,70 @@ class ConversionOptions:
 
 
 @dataclass(slots=True)
+class ReplacementClipTiming:
+    """保存單一替換素材在來源與輸出時間軸的位置"""
+
+    source_in: float = 0.0
+    source_out: float | None = None
+    timeline_start: float = 0.0
+    timeline_duration: float = 0.0
+    loop: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_in": self.source_in, "source_out": self.source_out,
+            "timeline_start": self.timeline_start, "timeline_duration": self.timeline_duration,
+            "loop": self.loop,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | Any) -> Self:
+        values = _mapping(data)
+        source_in = max(0.0, _optional_number(values.get("source_in")) or 0.0)
+        source_out = _optional_number(values.get("source_out"))
+        return cls(
+            source_in=source_in,
+            source_out=max(source_in, source_out) if source_out is not None else None,
+            timeline_start=max(0.0, _optional_number(values.get("timeline_start")) or 0.0),
+            timeline_duration=max(0.0, _optional_number(values.get("timeline_duration")) or 0.0),
+            loop=values.get("loop") is True,
+        )
+
+
+@dataclass(slots=True)
+class ReplacementTimeline:
+    """保存兩軌 clip 與整體輸出範圍"""
+
+    visual: ReplacementClipTiming = field(default_factory=ReplacementClipTiming)
+    audio: ReplacementClipTiming = field(default_factory=ReplacementClipTiming)
+    output_in: float = 0.0
+    output_out: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "visual": self.visual.to_dict(), "audio": self.audio.to_dict(),
+            "output_in": self.output_in, "output_out": self.output_out,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | Any) -> Self:
+        values = _mapping(data)
+        output_in = max(0.0, _optional_number(values.get("output_in")) or 0.0)
+        output_out = max(output_in, _optional_number(values.get("output_out")) or 0.0)
+        return cls(
+            visual=ReplacementClipTiming.from_dict(values.get("visual")),
+            audio=ReplacementClipTiming.from_dict(values.get("audio")),
+            output_in=output_in, output_out=output_out,
+        )
+
+
+@dataclass(slots=True)
 class ReplacementOptions:
     """畫面與音訊合成任務參數"""
 
     visual_path: str = ""
     audio_path: str = ""
+    output_name: str = ""
     duration_mode: str = "longest"
     custom_duration: float | None = None
     visual_loop: bool = False
@@ -271,17 +330,21 @@ class ReplacementOptions:
     aspect_ratio: str = "source"
     fit_mode: str = "contain"
     force_reencode: bool = False
+    timeline: ReplacementTimeline | None = None
     conversion: ConversionOptions = field(default_factory=ConversionOptions)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "visual_path": self.visual_path, "audio_path": self.audio_path,
+            "output_name": self.output_name,
             "duration_mode": self.duration_mode, "custom_duration": self.custom_duration,
             "visual_loop": self.visual_loop, "audio_loop": self.audio_loop,
             "visual_delay": self.visual_delay, "audio_delay": self.audio_delay,
             "trim_start": self.trim_start, "trim_end": self.trim_end,
             "aspect_ratio": self.aspect_ratio, "fit_mode": self.fit_mode,
-            "force_reencode": self.force_reencode, "conversion": self.conversion.to_dict(),
+            "force_reencode": self.force_reencode,
+            "timeline": self.timeline.to_dict() if self.timeline is not None else None,
+            "conversion": self.conversion.to_dict(),
         }
 
     @classmethod
@@ -292,6 +355,7 @@ class ReplacementOptions:
         fit_mode = _text(values.get("fit_mode"), "contain")
         return cls(
             visual_path=_text(values.get("visual_path")), audio_path=_text(values.get("audio_path")),
+            output_name=_text(values.get("output_name")),
             duration_mode=duration_mode if duration_mode in {"longest", "shortest", "custom"} else "longest",
             custom_duration=_optional_number(values.get("custom_duration")),
             visual_loop=values.get("visual_loop") is True, audio_loop=values.get("audio_loop") is True,
@@ -302,6 +366,8 @@ class ReplacementOptions:
             aspect_ratio=aspect_ratio if aspect_ratio in {"source", "16:9", "9:16", "1:1"} else "source",
             fit_mode=fit_mode if fit_mode in {"contain", "cover"} else "contain",
             force_reencode=values.get("force_reencode") is True,
+            timeline=ReplacementTimeline.from_dict(values["timeline"])
+            if isinstance(values.get("timeline"), Mapping) else None,
             conversion=ConversionOptions.from_dict(values.get("conversion", values.get("output"))),
         )
 

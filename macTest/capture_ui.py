@@ -143,11 +143,13 @@ def _populate_window(window: MainWindow, workspace: Path, media: MediaInfo) -> N
     window.conversion_panel.setEnabled(True)
     window.replacement_panel.setEnabled(True)
     window.replacement_panel.blockSignals(True)
-    window.replacement_panel.visual_card.set_path(str(video))
-    window.replacement_panel.audio_card.set_path(str(audio))
-    window.replacement_panel.blockSignals(False)
-    window.replacement_panel.set_source_probe(str(video), _probe_fixture())
-    window.replacement_panel.set_source_probe(str(audio), _probe_fixture())
+    try:
+        window.replacement_panel.visual_card.set_path(str(video))
+        window.replacement_panel.audio_card.set_path(str(audio))
+        window.replacement_panel.set_source_probe(str(video), _probe_fixture())
+        window.replacement_panel.set_source_probe(str(audio), _probe_fixture())
+    finally:
+        window.replacement_panel.blockSignals(False)
     window.file_analysis_panel.setEnabled(True)
     window.file_analysis_panel.blockSignals(True)
     window.file_analysis_panel.analyze_files((video,))

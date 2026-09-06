@@ -113,6 +113,7 @@ jobs:
           python -m nuitka
           --standalone
           --enable-plugin=pyside6
+          --include-qt-plugins=multimedia
           --include-package=yt_dlp
           --include-package-data=yt_dlp
           --nofollow-import-to=yt_dlp.extractor.lazy_extractors
@@ -273,7 +274,7 @@ jobs:
             > src/release_config.py
 
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install --yes libegl1 patchelf
+        run: sudo apt-get update && sudo apt-get install --yes libegl1 libpulse0 patchelf
 
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0
@@ -297,6 +298,7 @@ jobs:
           python -m nuitka
           --standalone
           --enable-plugin=pyside6
+          --include-qt-plugins=multimedia
           --include-package=yt_dlp
           --include-package-data=yt_dlp
           --nofollow-import-to=yt_dlp.extractor.lazy_extractors

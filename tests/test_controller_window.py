@@ -15,7 +15,7 @@ from file_analysis_controller import FileAnalysisController
 from media_service import ServiceCancelled
 from models import (
     CookieConfig, ConversionOptions, ConversionPreset, DownloadOptions, MediaInfo,
-    ReplacementOptions, TaskRecord, TaskStatus,
+    ReplacementClipTiming, ReplacementOptions, ReplacementTimeline, TaskRecord, TaskStatus,
 )
 from panels import BottomStatusBar, RoundedProgressBar
 from storage import AppStorage, Settings
@@ -562,10 +562,11 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     window.conversion_panel.set_splitter_sizes([430, 710])
     splitter_sizes = window.conversion_panel.splitter_sizes()
     window.replacement_panel.output_directory_edit.setText(str(conversion_dir))
-    window._set_combo(window.replacement_panel.duration_mode_combo, "custom")
-    window.replacement_panel.custom_duration_edit.setText("00:01:30.500")
-    window.replacement_panel.audio_card.loop_checkbox.setChecked(True)
-    window.replacement_panel.audio_card.delay_spin.setValue(0.25)
+    window.replacement_panel.editor.timeline.set_timeline(ReplacementTimeline(
+        visual=ReplacementClipTiming(0, 30, 0, 30),
+        audio=ReplacementClipTiming(0, 20, 0.25, 20, True),
+        output_in=1, output_out=25,
+    ))
     window.replacement_panel.set_splitter_sizes([520, 620])
     replacement_splitter_sizes = window.replacement_panel.splitter_sizes()
     shared_preset = ConversionPreset(id="shared-video", name="Shared Video", quality_value=7.5)
@@ -591,13 +592,13 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     )
     assert storage.load_settings().queue_column_widths == column_widths
     assert storage.load_settings().conversion_splitter_sizes == splitter_sizes
-    assert storage.load_settings().replacement_settings["custom_duration"] == 90.5
-    assert storage.load_settings().replacement_settings["audio_loop"] is True
-    assert storage.load_settings().replacement_settings["audio_delay"] == 0.25
+    assert "timeline" not in storage.load_settings().replacement_settings
+    assert "audio_loop" not in storage.load_settings().replacement_settings
+    assert "audio_delay" not in storage.load_settings().replacement_settings
     assert storage.load_settings().replacement_settings["preset_id"] == "shared-video"
     assert storage.load_settings().last_conversion_preset_id == "shared-video"
     assert [preset.id for preset in storage.load_settings().conversion_presets] == ["shared-video"]
-    assert storage.load_settings().replacement_splitter_sizes == replacement_splitter_sizes
+    assert storage.load_settings().replacement_splitter_sizes == [max(100, size) for size in replacement_splitter_sizes]
 
     reopened = window_module.MainWindow(storage)
     assert not reopened.windowFlags() & frameless_flag
@@ -615,8 +616,8 @@ def test_main_window_registers_panels_and_degrades_without_tools(app, tmp_path: 
     assert reopened.subtitle_panel.cookie_browser_combo.currentData() == "firefox"
     assert reopened.analyze_panel.cookie_mode_combo.currentData() == "browser"
     assert reopened.analyze_panel.cookie_browser_combo.currentData() == "firefox"
-    assert reopened.replacement_panel.custom_duration_edit.text() == "00:01:30.500"
-    assert reopened.replacement_panel.audio_card.loop_checkbox.isChecked()
+    assert reopened.replacement_panel.editor.timeline.output_in == 0
+    assert reopened.replacement_panel.editor.timeline.output_out == 5
     assert reopened.replacement_panel.current_preset_id() == "shared-video"
     assert reopened.replacement_panel.quality_value_spin.value() == 9
     assert reopened.replacement_panel.preset_combo.placeholderText() == "Shared Video*"

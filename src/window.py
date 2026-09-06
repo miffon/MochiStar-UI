@@ -3,13 +3,12 @@ from __future__ import annotations
 import ctypes
 import logging
 import math
-import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, QTimer, QUrl, Qt
+from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, QStandardPaths, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices, QIcon, QMouseEvent, QPainter, QPen, QRegion, QResizeEvent, QShowEvent
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -45,6 +44,7 @@ from models import (
     ConversionOptions,
     DownloadOptions,
     MediaInfo,
+    ReplacementTimeline,
     ReplacementOptions,
     SubtitleOptions,
     SubtitleSelection,
@@ -55,6 +55,7 @@ from panels import (
     AnalyzePanel, BottomStatusBar, ConversionPanel, FileAnalysisPanel, ReplacementPanel,
     LogPanel, QueuePanel, RoundedProgressBar, SettingsPanel, SubtitlePanel,
 )
+from preview_controller import PreviewCache, PreviewController
 from release_config import IS_TEST_BUILD
 from storage import AppStorage, Settings
 from theme import ThemeError, apply_theme, theme_color
@@ -269,6 +270,10 @@ class MainWindow(QMainWindow):
             self.media_service.configure_tools(ffmpeg_directory, js_directory)
         if hasattr(self.ffmpeg_service, "configure_tools"):
             self.ffmpeg_service.configure_tools(ffmpeg_directory)
+        standard_app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        uses_standard_storage = standard_app_data and storage.app_dir.resolve() == Path(standard_app_data).resolve()
+        custom_cache = None if uses_standard_storage else PreviewCache(storage.app_dir / "preview-cache")
+        self.preview_controller = PreviewController(self.ffmpeg_service, custom_cache)
         self.analysis_controller = AnalysisController(self.media_service)
         self.subtitle_analysis_controller = AnalysisController(self.media_service)
         self.task_controller = TaskController(
@@ -470,6 +475,19 @@ class MainWindow(QMainWindow):
         self.replacement_panel.sources_changed.connect(self.file_analysis_controller.analyze)
         self.replacement_panel.validation_requested.connect(self._validate_replacement)
         self.replacement_panel.add_requested.connect(self._add_replacement)
+        self.replacement_panel.preview_requested.connect(self._schedule_replacement_preview)
+        self.replacement_panel.source_asset_requested.connect(self.preview_controller.generate_asset)
+        self.preview_controller.preview_ready.connect(self.replacement_panel.editor.preview.set_preview)
+        self.preview_controller.preview_failed.connect(self.replacement_panel.editor.preview.set_error)
+        self.preview_controller.cache_reset.connect(self.replacement_panel.editor.preview.clear_cache)
+        self.preview_controller.cache_ranges_changed.connect(self.replacement_panel.editor.timeline.set_cached_ranges)
+        self.preview_controller.cache_segments_changed.connect(self.replacement_panel.editor.timeline.set_cached_segments)
+        self.preview_controller.cache_segments_changed.connect(
+            self.replacement_panel.editor.preview.retain_cache_segments
+        )
+        self.preview_controller.asset_ready.connect(self.replacement_panel.set_timeline_asset)
+        self.replacement_panel.editor.cache_invalidated.connect(self.preview_controller.invalidate)
+        self.replacement_panel.editor.cache_focus_changed.connect(self.preview_controller.update_focus)
         self.replacement_panel.presets_changed.connect(
             lambda presets: self._shared_presets_changed(self.replacement_panel, presets)
         )
@@ -881,12 +899,15 @@ class MainWindow(QMainWindow):
         """將 ReplacementPanel payload 固定成 queue 可保存的完整快照"""
         return ReplacementOptions(
             visual_path=str(payload.get("visual_path") or ""), audio_path=str(payload.get("audio_path") or ""),
+            output_name=str(payload.get("output_name") or ""),
             duration_mode=str(payload.get("duration_mode") or "longest"),
             custom_duration=payload.get("custom_duration"), visual_loop=bool(payload.get("visual_loop")),
             audio_loop=bool(payload.get("audio_loop")), visual_delay=float(payload.get("visual_delay") or 0),
             audio_delay=float(payload.get("audio_delay") or 0), trim_start=float(payload.get("trim_start") or 0),
             trim_end=float(payload.get("trim_end") or 0), aspect_ratio=str(payload.get("aspect_ratio") or "source"),
             fit_mode=str(payload.get("fit_mode") or "contain"), force_reencode=bool(payload.get("force_reencode")),
+            timeline=ReplacementTimeline.from_dict(payload["timeline"])
+            if isinstance(payload.get("timeline"), dict) else None,
             conversion=cls._conversion_options(payload, str(payload.get("visual_path") or ""), output_dir),
         )
 
@@ -987,7 +1008,6 @@ class MainWindow(QMainWindow):
     def _validate_replacement(self, payload: dict[str, Any]) -> None:
         """使用已完成的 FFprobe 結果驗證替換設定"""
         self.replacement_panel.set_request_error("")
-        self.replacement_panel.set_processing_summary("")
         visual_path, audio_path = str(payload.get("visual_path") or ""), str(payload.get("audio_path") or "")
         if not visual_path or not audio_path: return
         probes = self.replacement_panel.source_probes()
@@ -1000,17 +1020,6 @@ class MainWindow(QMainWindow):
         error = self.ffmpeg_service.validate_replacement(options, probes[visual_path], probes[audio_path])
         if error:
             self.replacement_panel.set_request_error(tr(error))
-            return
-        _copy_video, _copy_audio, summary = self.ffmpeg_service.replacement_actions(
-            options, probes[visual_path], probes[audio_path]
-        )
-        match = re.fullmatch(r"Video: (.+); Audio: (.+); Duration: ([0-9.]+)s", summary)
-        if match:
-            summary = tr(
-                "Video: {video}; Audio: {audio}; Duration: {duration}s",
-                video=tr(match.group(1)), audio=tr(match.group(2)), duration=match.group(3),
-            )
-        self.replacement_panel.set_processing_summary(summary)
 
     def _add_replacement(self, payload: dict[str, Any]) -> None:
         """建立一筆畫面與音訊合成 queue task"""
@@ -1027,6 +1036,25 @@ class MainWindow(QMainWindow):
             kind=TaskKind.REPLACEMENT, title=f"{Path(visual_path).name} + {Path(audio_path).name}",
             output_path=output_dir, replacement_options=options,
         )])
+
+    def _schedule_replacement_preview(self, playhead: float) -> None:
+        """驗證目前兩軌狀態後排程播放頭附近的 RAM preview"""
+        payload = self.replacement_panel.request_payload()
+        self._validate_replacement(payload)
+        if self.replacement_panel.validation_label.text():
+            self.preview_controller.cancel()
+            return
+        visual_path, audio_path = payload["visual_path"], payload["audio_path"]
+        probes = self.replacement_panel.source_probes()
+        if visual_path not in probes or audio_path not in probes:
+            self.preview_controller.cancel()
+            return
+        options = self._replacement_options(payload, payload.get("output_dir") or "")
+        extension, ahead, maximum_bytes, maximum_segments = self.replacement_panel.preview_cache_settings()
+        self.preview_controller.schedule(
+            options, probes[visual_path], probes[audio_path], playhead,
+            extension, ahead, maximum_bytes, maximum_segments,
+        )
 
     def _browse_output(self, line_edit: Any) -> None:
         initial = line_edit.text().strip() or self.settings.output_dir
@@ -1478,6 +1506,8 @@ class MainWindow(QMainWindow):
         self.settings.geometry = bytes(self.saveGeometry())
         self.settings.window_state = bytes(self.saveState())
         self.storage.save_settings(self.settings)
+        self.replacement_panel.editor.preview.release_preview()
+        self.preview_controller.shutdown()
         self.analysis_controller.shutdown()
         self.subtitle_analysis_controller.shutdown()
         self.file_analysis_controller.shutdown()

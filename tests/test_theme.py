@@ -53,15 +53,25 @@ def test_starlit_night_resolves_tokens_and_contains_core_styles():
     assert 'QLabel[role="mediaPreview"]' in stylesheet
     assert "QTableView::item:selected" in stylesheet
     assert "QScrollBar::handle:hover" in stylesheet
+    assert re.search(r"QScrollBar::handle:vertical\s*\{[^}]*border-radius:\s*3px", stylesheet, re.DOTALL)
+    assert re.search(r"QScrollBar::handle:horizontal\s*\{[^}]*border-radius:\s*3px", stylesheet, re.DOTALL)
     assert "QComboBox::down-arrow" in stylesheet
-    assert re.search(rf"QProgressBar\s*\{{[^}}]*qproperty-chunkColor:\s*{palette['accent']}", stylesheet, re.DOTALL)
+    assert re.search(rf"RoundedProgressBar\s*\{{[^}}]*qproperty-chunkColor:\s*{palette['accent']}", stylesheet, re.DOTALL)
     assert "QComboBox:editable QLineEdit" in stylesheet
     assert 'font-family: "Segoe UI"' not in stylesheet
     assert 'QComboBox[role="formatSelector"]' in stylesheet
     assert "chevron-down.svg" in stylesheet
     assert "chevron-up.svg" in stylesheet
     assert "QDoubleSpinBox::up-arrow" in stylesheet
-    assert "QSplitter::handle:horizontal" in stylesheet
+    assert re.search(
+        r"QSplitter::handle:horizontal\s*\{[^}]*qlineargradient[^}]*width:\s*5px",
+        stylesheet, re.DOTALL,
+    )
+    assert re.search(rf"QSplitter\s*\{{[^}}]*background-color:\s*{palette['background']}", stylesheet, re.DOTALL)
+    assert re.search(
+        r"QSplitter::handle:vertical\s*\{[^}]*qlineargradient[^}]*height:\s*9px",
+        stylesheet, re.DOTALL,
+    )
     assert 'QListWidget[dragActive="true"]' in stylesheet
     assert 'QCheckBox[role="inlineOption"]' in stylesheet
     assert re.search(r"QSpinBox::up-button, QDoubleSpinBox::up-button,[^{]*\{[^}]*width:\s*18px", stylesheet, re.DOTALL)
