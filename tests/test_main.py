@@ -61,6 +61,23 @@ def test_update_smoke_test_checks_current_platform() -> None:
     assert len(provider.platforms) == 1
 
 
+def test_update_smoke_test_uses_workflow_token(monkeypatch) -> None:
+    import main as main_module
+
+    received_tokens = []
+
+    class Provider:
+        def __init__(self, token=""): received_tokens.append(token)
+
+        def check_latest(self, _platform_key): return None
+
+    monkeypatch.setenv("MOCHISTAR_GITHUB_TOKEN", "workflow-token")
+    monkeypatch.setattr(main_module, "QtGitHubReleaseProvider", Provider)
+
+    assert main_module._run_update_smoke_test() == 0
+    assert received_tokens == ["workflow-token"]
+
+
 def test_probe_stage_writes_external_trace(tmp_path: Path, monkeypatch) -> None:
     trace_path = tmp_path / "probe-trace.txt"
     monkeypatch.setenv("MOCHISTAR_PROBE_TRACE_FILE", str(trace_path))

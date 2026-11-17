@@ -73,7 +73,10 @@ def _initialize_language(
 
 def _run_update_smoke_test(provider: QtGitHubReleaseProvider | None = None) -> int:
     """讓 packaged application 驗證 Qt network update request"""
-    (provider or QtGitHubReleaseProvider()).check_latest(current_platform_key())
+    active_provider = provider or QtGitHubReleaseProvider(
+        token=os.environ.get("MOCHISTAR_GITHUB_TOKEN", ""),
+    )
+    active_provider.check_latest(current_platform_key())
     return 0
 
 

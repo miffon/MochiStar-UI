@@ -361,6 +361,27 @@ def test_update_controller_checks_in_background_and_filters_current_version(app)
     controller.shutdown()
 
 
+def test_update_controller_uses_the_exact_download_directory(app) -> None:
+    target_dir = Path("C:/Users/test/Downloads")
+    received_targets = []
+
+    class Downloader:
+        def download(self, release, received_target, _progress, _cancel_event):
+            received_targets.append(received_target)
+            assert release.asset is not None
+            return DownloadedUpdate(release, received_target / release.asset.name)
+
+    controller = UpdateController(object(), Downloader(), "1.0.0", "windows")
+    completed = []
+    controller.download_succeeded.connect(completed.append)
+    controller.download(make_release(), target_dir)
+    wait_until(app, lambda: bool(completed))
+
+    assert received_targets == [target_dir]
+    assert completed[0].path == target_dir / "MochiStar-Windows-portable.zip"
+    controller.shutdown()
+
+
 @pytest.mark.parametrize(
     "current_version,is_test_build,latest_version,status,available_version",
     [

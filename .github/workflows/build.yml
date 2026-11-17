@@ -227,6 +227,8 @@ jobs:
           "${{ needs['validate-version'].outputs.display_version }}"
 
       - name: Validate macOS DMG
+        env:
+          MOCHISTAR_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mount_path="$(mktemp -d)"
