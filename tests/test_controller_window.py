@@ -66,6 +66,24 @@ def test_update_progress_dialog_reuses_rounded_progress_bar(app) -> None:
     parent.close()
 
 
+def test_update_download_directory_is_flat_on_windows_and_preserved_elsewhere(
+    monkeypatch,
+) -> None:
+    import window as window_module
+
+    downloads = Path("C:/Users/test/Downloads")
+    app_data = Path("C:/Users/test/AppData/Roaming/Miffon/MochiStar")
+    monkeypatch.setattr(window_module, "_system_download_directory", lambda: downloads)
+
+    assert window_module.update_download_directory("windows", app_data, "1.2.3") == downloads
+    assert window_module.update_download_directory("macos", app_data, "1.2.3") == (
+        app_data / "updates" / "1.2.3"
+    )
+    assert window_module.update_download_directory("linux", app_data, "1.2.3") == (
+        app_data / "updates" / "1.2.3"
+    )
+
+
 class FakeFFmpegService:
     def execute_conversion(self, task, progress_cb, log_cb, cancel_event):
         progress_cb(1.0, "Converted")

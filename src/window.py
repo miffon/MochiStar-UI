@@ -104,6 +104,18 @@ def update_progress_dialog(dialog: QProgressDialog, received: int, total: int) -
     dialog.setLabelText(f"{tr('Downloading update file...')} {percent}%")
 
 
+def _system_download_directory() -> Path:
+    """取得作業系統下載資料夾，無法取得時回退到使用者家目錄。"""
+    location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    return Path(location) if location else Path.home() / "Downloads"
+
+
+def update_download_directory(platform_key: str, app_dir: Path, version: str) -> Path:
+    """Windows 直接使用下載資料夾，其餘平台維持 application data 內的版本目錄。"""
+    if platform_key == "windows": return _system_download_directory()
+    return app_dir / "updates" / str(version)
+
+
 def _rounded_rect_region(rect: QRect, radius: int) -> QRegion:
     """用逐列圓弧建立 1-bit rounded mask, 避免 polygon 產生大型銳角"""
     radius = max(0, min(int(radius), rect.width() // 2, rect.height() // 2))
@@ -1296,7 +1308,10 @@ class MainWindow(QMainWindow):
         dialog.exec()
         clicked_button = dialog.clickedButton()
         if download_button is not None and clicked_button is download_button:
-            self.update_controller.download(release, self.storage.app_dir / "updates")
+            target_dir = update_download_directory(
+                self.update_controller.platform_key, self.storage.app_dir, str(release.version),
+            )
+            self.update_controller.download(release, target_dir)
         elif release_button is not None and clicked_button is release_button:
             QDesktopServices.openUrl(QUrl(release.page_url))
 

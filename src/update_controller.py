@@ -67,7 +67,7 @@ class UpdateController(QObject):
         self.check_started.emit(manual)
         self._executor.submit(self._run_check, request_id, manual)
 
-    def download(self, release: UpdateRelease, target_root: Path) -> None:
+    def download(self, release: UpdateRelease, target_dir: Path) -> None:
         """下載並驗證指定 release"""
         if self._shutting_down: return
         self._download_id += 1
@@ -75,7 +75,6 @@ class UpdateController(QObject):
         if self._download_cancel_event: self._download_cancel_event.set()
         self._download_cancel_event = threading.Event()
         self.download_started.emit(release)
-        target_dir = target_root / str(release.version)
         self._executor.submit(self._run_download, request_id, release, target_dir, self._download_cancel_event)
 
     def cancel_download(self) -> None:
